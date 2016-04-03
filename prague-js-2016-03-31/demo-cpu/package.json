@@ -1,0 +1,13 @@
+{
+  "name": "fibonacci",
+  "description": "Demonstrates use of basic profiling and v8-profiler to detect perf
+bottleneck in JavaScript.",
+  "main": "fibonacci.js",
+  "scripts": {
+    "start-v8profiler": "V8PROFILE=1 node fibonacci.js",
+    "start": "node --prof fibonacci.js"
+  },
+  "dependencies": {
+    "v8-profiler": "~5.3.2"
+  }
+}

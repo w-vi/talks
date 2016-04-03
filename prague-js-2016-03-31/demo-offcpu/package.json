@@ -1,0 +1,13 @@
+{
+  "name": "welcome-tip",
+  "version": "1.0.0",
+  "description": "An app to demonstrate how to trace problems detected on systems level back to JavaScript.",
+  "main": "app.js",
+  "scripts": {
+    "start-perf": "perf record -e cycles:u -g -- node --perf-basic-prof app.js",
+    "start-prof": "node --prof app.js"
+  },
+  "dependencies": {
+    "concat-stream": "~1.4.7",
+  }
+}

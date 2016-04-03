@@ -1,0 +1,123 @@
+Statistical profiling result from isolate-0x3435d60-v8.log, (179 ticks, 0 unaccounted, 0 excluded).
+
+ [Shared libraries]:
+   ticks  total  nonlib   name
+      2    1.1%          /usr/lib/libc-2.23.so
+      1    0.6%          /usr/lib/libpthread-2.23.so
+
+ [JavaScript]:
+   ticks  total  nonlib   name
+    102   57.0%   58.0%  LazyCompile: *calculateFibonacci /home/wvi/src/talks/prague-js-2016-03-31/demo-cpu/fibonacci.js:58:28
+      1    0.6%    0.6%  LazyCompile: ~runInThisContext node.js:870:28
+      1    0.6%    0.6%  LazyCompile: ~exports._unrefActive timers.js:599:32
+
+ [C++]:
+   ticks  total  nonlib   name
+     17    9.5%    9.7%  node::ContextifyScript::New(v8::FunctionCallbackInfo<v8::Value> const&)
+      2    1.1%    1.1%  syscall
+      2    1.1%    1.1%  node::Binding(v8::FunctionCallbackInfo<v8::Value> const&)
+      2    1.1%    1.1%  _int_malloc
+      2    1.1%    1.1%  __GI___libc_malloc
+      2    1.1%    1.1%  __GI__IO_vfprintf
+      1    0.6%    0.6%  void v8::internal::String::WriteToFlat<unsigned short>(v8::internal::String*, unsigned short*, int, int)
+      1    0.6%    0.6%  void v8::internal::Scanner::Advance<false, true>()
+      1    0.6%    0.6%  v8::internal::Zone::New(unsigned long)
+      1    0.6%    0.6%  v8::internal::TransitionArray::Insert(v8::internal::Handle<v8::internal::Map>, v8::internal::Handle<v8::internal::Name>, v8::internal::Handle<v8::internal::Map>, v8::internal::SimpleTransitionFlag)
+      1    0.6%    0.6%  v8::internal::TemplateHashMapImpl<v8::internal::FreeStoreAllocationPolicy>::LookupOrInsert(void*, unsigned int, v8::internal::FreeStoreAllocationPolicy) [clone .isra.50]
+      1    0.6%    0.6%  v8::internal::String::LooksValid()
+      1    0.6%    0.6%  v8::internal::String::CalculateLineEnds(v8::internal::Handle<v8::internal::String>, bool)
+      1    0.6%    0.6%  v8::internal::StoreIC::UpdateCaches(v8::internal::LookupIterator*, v8::internal::Handle<v8::internal::Object>, v8::internal::Object::StoreFromKeyed)
+      1    0.6%    0.6%  v8::internal::Scope::LookupLocal(v8::internal::AstRawString const*)
+      1    0.6%    0.6%  v8::internal::Scope::CheckConflictingVarDeclarations()
+      1    0.6%    0.6%  v8::internal::Scanner::ScanIdentifierOrKeyword()
+      1    0.6%    0.6%  v8::internal::Runtime::GetObjectProperty(v8::internal::Isolate*, v8::internal::Handle<v8::internal::Object>, v8::internal::Handle<v8::internal::Object>, v8::internal::LanguageMode)
+      1    0.6%    0.6%  v8::internal::RootMarkingVisitor::VisitPointer(v8::internal::Object**)
+      1    0.6%    0.6%  v8::internal::RelocInfoWriter::FlushPosition() [clone .part.97]
+      1    0.6%    0.6%  v8::internal::PropertyICCompiler::ComputeStore(v8::internal::Isolate*, v8::internal::InlineCacheState, int)
+      1    0.6%    0.6%  v8::internal::PredictableCodeSizeScope::PredictableCodeSizeScope(v8::internal::AssemblerBase*, int)
+      1    0.6%    0.6%  v8::internal::ParserBase<v8::internal::ParserTraits>::ParseMemberExpression(v8::internal::ExpressionClassifier*, bool*)
+      1    0.6%    0.6%  v8::internal::ParserBase<v8::internal::ParserTraits>::ParseLeftHandSideExpression(v8::internal::ExpressionClassifier*, bool*)
+      1    0.6%    0.6%  v8::internal::Parser::ParseV8Intrinsic(bool*)
+      1    0.6%    0.6%  v8::internal::Parser::ParseSubStatement(v8::internal::ZoneList<v8::internal::AstRawString const*>*, bool*)
+      1    0.6%    0.6%  v8::internal::Object::SetPropertyInternal(v8::internal::LookupIterator*, v8::internal::Handle<v8::internal::Object>, v8::internal::LanguageMode, v8::internal::Object::StoreFromKeyed, bool*)
+      1    0.6%    0.6%  v8::internal::Object::OptimalRepresentation()
+      1    0.6%    0.6%  v8::internal::MarkCompactCollector::EmptyMarkingDeque()
+      1    0.6%    0.6%  v8::internal::LookupIterator::IsIntegerIndexedExotic(v8::internal::JSReceiver*)
+      1    0.6%    0.6%  v8::internal::LoadIC::CompileHandler(v8::internal::LookupIterator*, v8::internal::Handle<v8::internal::Object>, v8::internal::CacheHolderFlag)
+      1    0.6%    0.6%  v8::internal::LChunkBuilderBase::CreateEnvironment(v8::internal::HEnvironment*, int*, v8::internal::ZoneList<v8::internal::HValue*>*)
+      1    0.6%    0.6%  v8::internal::LAllocator::LAllocator(int, v8::internal::HGraph*)
+      1    0.6%    0.6%  v8::internal::JSObject::DefineOwnPropertyIgnoreAttributes(v8::internal::LookupIterator*, v8::internal::Handle<v8::internal::Object>, PropertyAttributes, v8::internal::JSObject::ExecutableAccessorInfoHandling)
+      1    0.6%    0.6%  v8::internal::InnerPointerToCodeCache::GetCacheEntry(unsigned char*)
+      1    0.6%    0.6%  v8::internal::HValue::Hashcode()
+      1    0.6%    0.6%  v8::internal::HStoreNamedField::opcode() const
+      1    0.6%    0.6%  v8::internal::HInstruction::InsertAfter(v8::internal::HInstruction*)
+      1    0.6%    0.6%  v8::internal::HGraph::CheckConstPhiUses()
+      1    0.6%    0.6%  v8::internal::FullCodeGenerator::VisitForStatement(v8::internal::ForStatement*)
+      1    0.6%    0.6%  v8::internal::FullCodeGenerator::EmitCallWithLoadIC(v8::internal::Call*)
+      1    0.6%    0.6%  v8::internal::DescriptorLookupCache::Update(v8::internal::Map*, v8::internal::Name*, int)
+      1    0.6%    0.6%  v8::internal::Code::CopyFrom(v8::internal::CodeDesc const&)
+      1    0.6%    0.6%  v8::internal::Builtin_ArrayShift(int, v8::internal::Object**, v8::internal::Isolate*)
+      1    0.6%    0.6%  v8::internal::AstVisitor::VisitStatements(v8::internal::ZoneList<v8::internal::Statement*>*)
+      1    0.6%    0.6%  v8::internal::AstValueFactory::GetOneByteStringInternal(v8::internal::Vector<unsigned char const>)
+      1    0.6%    0.6%  v8::base::Thread::GetThreadLocal(int)
+      1    0.6%    0.6%  std::string::swap(std::string&)
+      1    0.6%    0.6%  node::Buffer::SetupBufferJS(v8::FunctionCallbackInfo<v8::Value> const&)
+      1    0.6%    0.6%  __memmove_avx_unaligned
+      1    0.6%    0.6%  _IO_no_init
+
+ [Summary]:
+   ticks  total  nonlib   name
+    104   58.1%   59.1%  JavaScript
+     72   40.2%   40.9%  C++
+      3    1.7%    1.7%  GC
+      3    1.7%          Shared libraries
+
+ [C++ entry points]:
+   ticks    cpp   total   name
+     19   28.8%   10.6%  v8::internal::Runtime_CompileLazy(int, v8::internal::Object**, v8::internal::Isolate*)
+     17   25.8%    9.5%  v8::internal::Builtin_HandleApiCallConstruct(int, v8::internal::Object**, v8::internal::Isolate*)
+     11   16.7%    6.1%  v8::internal::StoreIC_Miss(int, v8::internal::Object**, v8::internal::Isolate*)
+      3    4.5%    1.7%  v8::internal::LoadIC_Miss(int, v8::internal::Object**, v8::internal::Isolate*)
+      3    4.5%    1.7%  v8::internal::Builtin_HandleApiCall(int, v8::internal::Object**, v8::internal::Isolate*)
+      2    3.0%    1.1%  v8::internal::Runtime_NewObject(int, v8::internal::Object**, v8::internal::Isolate*)
+      2    3.0%    1.1%  v8::internal::KeyedStoreIC_Miss(int, v8::internal::Object**, v8::internal::Isolate*)
+      1    1.5%    0.6%  v8::internal::ToBooleanIC_Miss(int, v8::internal::Object**, v8::internal::Isolate*)
+      1    1.5%    0.6%  v8::internal::Runtime_NumberToStringSkipCache(int, v8::internal::Object**, v8::internal::Isolate*)
+      1    1.5%    0.6%  v8::internal::Runtime_NumberToRadixString(int, v8::internal::Object**, v8::internal::Isolate*)
+      1    1.5%    0.6%  v8::internal::Runtime_KeyedGetProperty(int, v8::internal::Object**, v8::internal::Isolate*)
+      1    1.5%    0.6%  v8::internal::Runtime_FunctionBindArguments(int, v8::internal::Object**, v8::internal::Isolate*)
+      1    1.5%    0.6%  v8::internal::Runtime_CreateObjectLiteral(int, v8::internal::Object**, v8::internal::Isolate*)
+      1    1.5%    0.6%  v8::internal::Runtime_CompileOptimized(int, v8::internal::Object**, v8::internal::Isolate*)
+      1    1.5%    0.6%  v8::internal::KeyedLoadIC_Miss(int, v8::internal::Object**, v8::internal::Isolate*)
+      1    1.5%    0.6%  v8::internal::Builtin_ArrayShift(int, v8::internal::Object**, v8::internal::Isolate*)
+
+ [Bottom up (heavy) profile]:
+  Note: percentage shows a share of a particular caller in the total
+  amount of its parent calls.
+  Callers occupying less than 2.0% are not shown.
+
+   ticks parent  name
+    102   57.0%  LazyCompile: *calculateFibonacci /home/wvi/src/talks/prague-js-2016-03-31/demo-cpu/fibonacci.js:58:28
+    102  100.0%    LazyCompile: *calculateFibonacci /home/wvi/src/talks/prague-js-2016-03-31/demo-cpu/fibonacci.js:58:28
+    102  100.0%      LazyCompile: *calculateFibonacci /home/wvi/src/talks/prague-js-2016-03-31/demo-cpu/fibonacci.js:58:28
+    102  100.0%        LazyCompile: *calculateFibonacci /home/wvi/src/talks/prague-js-2016-03-31/demo-cpu/fibonacci.js:58:28
+    102  100.0%          LazyCompile: *calculateFibonacci /home/wvi/src/talks/prague-js-2016-03-31/demo-cpu/fibonacci.js:58:28
+    102  100.0%            LazyCompile: *calculateFibonacci /home/wvi/src/talks/prague-js-2016-03-31/demo-cpu/fibonacci.js:58:28
+
+     17    9.5%  node::ContextifyScript::New(v8::FunctionCallbackInfo<v8::Value> const&)
+     17  100.0%    v8::internal::Builtin_HandleApiCallConstruct(int, v8::internal::Object**, v8::internal::Isolate*)
+     17  100.0%      LazyCompile: ~runInThisContext node.js:870:28
+     17  100.0%        LazyCompile: ~NativeModule.compile node.js:951:44
+     17  100.0%          LazyCompile: ~NativeModule.require node.js:885:34
+      3   17.6%            Function: ~<anonymous> stream.js:1:11
+      3   17.6%            Function: ~<anonymous> module.js:1:11
+      2   11.8%            Function: ~<anonymous> http.js:1:11
+      2   11.8%            Function: ~<anonymous> _http_server.js:1:11
+      1    5.9%            LazyCompile: ~startup.globalVariables node.js:179:37
+      1    5.9%            LazyCompile: ~listen net.js:1261:16
+      1    5.9%            Function: ~<anonymous> url.js:1:11
+      1    5.9%            Function: ~<anonymous> cluster.js:1:11
+      1    5.9%            Function: ~<anonymous> child_process.js:1:11
+      1    5.9%            Function: ~<anonymous> assert.js:1:11
+      1    5.9%            Function: ~<anonymous> _http_client.js:1:11
+
