@@ -50,7 +50,11 @@ also the C/C++ stack information. To run the profiling see
 `profile.sh` file. Because the perf tool produces loads of data it
 needs to be processed for easier visualizations. There is a tool
 called [`cpuprofilify`](https://www.npmjs.com/package/cpuprofilify)
-which does exactly that a produces again the `cpuprofile` file.
+which does exactly that and produces again the `cpuprofile` file.
+
+You can use the same approach on machines with DTrace like OSX, see
+[cpuprofilify README](https://github.com/thlorenz/cpuprofilify) for 
+details on how to set it up on DTrace.
 
 
 ## Credit
