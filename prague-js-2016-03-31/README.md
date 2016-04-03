@@ -45,11 +45,11 @@ which in this case is not usefull as the bottle neck is not on CPU.
 make the server work.
 
 `npm run start-perf` will profile the app using linux
-[perf](https://perf.wiki.kernel.org/index.php/Main_Page) tool to get
+[`perf`](https://perf.wiki.kernel.org/index.php/Main_Page) tool to get
 also the C/C++ stack information. To run the profiling see
 `profile.sh` file. Because the perf tool produces loads of data it
 needs to be processed for easier visualizations. There is a tool
-called [cpuprofilify](https://www.npmjs.com/package/cpuprofilify)
+called [`cpuprofilify`](https://www.npmjs.com/package/cpuprofilify)
 which does exactly that a produces again the `cpuprofile` file.
 
 
