@@ -1,0 +1,1765 @@
+
+<!DOCTYPE html>
+
+<html>
+<head>
+    <title>chan.go</title>
+  <meta http-equiv="content-type" content="text/html; charset=UTF-8">
+  <link rel="stylesheet" media="all" href="gocco.css" />
+</head>
+<body>
+  <div id="container">
+    <div id="background"></div>
+    
+    <table cellpadding="0" cellspacing="0">
+      <thead>
+        <tr>
+          <th class="docs">
+            <h1>
+                chan.go
+            </h1>
+          </th>
+          <th class="code">
+          </th>
+        </tr>
+      </thead>
+      <tbody>
+          
+          <tr id="section-1">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-1">&#182;</a>
+              </div>
+                <p>This file is a complementary document for the talk on golang
+channels internals I gave on <a href="http://www.meetup.com/Golang-Brno/events/231266490/">golang meetup in
+Brno</a>(Czech
+Republic) on 16th of June 2016.  Process it with
+<a href="http://nikhilm.github.io/gocco/">gocco</a> to render html out of it.</p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre><span></span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-2">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-2">&#182;</a>
+              </div>
+                <p>Part of the talk was quick walk-through of the go channel code in
+<code>go/src/runtime/chan.go</code> file and this file is a transcript of
+sorts of that walk-through not a very detailed one but enough to get
+the idea. I am keeping some of the original comments in place as they help
+to understand the code.</p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre><span class="kn">package</span> <span class="nx">runtime</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-3">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-3">&#182;</a>
+              </div>
+                <p>This file contains the full implementation of Go channels but has
+been changed. Well just the comments the go code is intact. Please
+see
+<a href="https://github.com/golang/go/blob/7e460e70d90295cf08ea627c0a0fff170aba5518/src/runtime/chan.go"><code>go/src/runtime/chan.go</code></a>
+for the original content.</p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre><span class="kn">import</span> <span class="p">(</span>
+	<span class="s">&quot;runtime/internal/atomic&quot;</span>
+	<span class="s">&quot;unsafe&quot;</span>
+<span class="p">)</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-4">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-4">&#182;</a>
+              </div>
+                <p>Aligning memory to 8 bytes, that&rsquo;s why the cryptic <code>hchanSize</code></p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre><span class="kd">const</span> <span class="p">(</span>
+	<span class="nx">maxAlign</span>  <span class="p">=</span> <span class="mi">8</span>
+	<span class="nx">hchanSize</span> <span class="p">=</span> <span class="nx">unsafe</span><span class="p">.</span><span class="nx">Sizeof</span><span class="p">(</span><span class="nx">hchan</span><span class="p">{})</span> <span class="o">+</span> <span class="nb">uintptr</span><span class="p">(</span><span class="o">-</span><span class="nb">int</span><span class="p">(</span><span class="nx">unsafe</span><span class="p">.</span><span class="nx">Sizeof</span><span class="p">(</span><span class="nx">hchan</span><span class="p">{}))</span><span class="o">&amp;</span><span class="p">(</span><span class="nx">maxAlign</span><span class="o">-</span><span class="mi">1</span><span class="p">))</span>
+	<span class="nx">debugChan</span> <span class="p">=</span> <span class="kc">false</span>
+<span class="p">)</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-5">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-5">&#182;</a>
+              </div>
+                <h2>The Channel</h2>
+
+<p><code>hchan struct</code> is the representation of the channel itself.  It is
+implemented as a ring buffer (circular queue) with given size
+<code>dataqsiz</code>. The memory for the buffer is stored in <code>buf</code> pointer
+and is allocated dynamically based on the type of the channel. It
+stores also a lists of waiting senders and receivers in <code>sendq</code> and
+<code>recvq</code> respectively. <code>elemsize</code> is the size of elements
+stored. See the comments int the source for some more details.</p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre><span class="kd">type</span> <span class="nx">hchan</span> <span class="kd">struct</span> <span class="p">{</span>
+	<span class="nx">qcount</span>   <span class="kt">uint</span>           <span class="c1">// total data in the queue</span>
+	<span class="nx">dataqsiz</span> <span class="kt">uint</span>           <span class="c1">// size of the circular queue</span>
+	<span class="nx">buf</span>      <span class="nx">unsafe</span><span class="p">.</span><span class="nx">Pointer</span> <span class="c1">// points to an array of dataqsiz elements</span>
+	<span class="nx">elemsize</span> <span class="kt">uint16</span>
+	<span class="nx">closed</span>   <span class="kt">uint32</span>
+	<span class="nx">elemtype</span> <span class="o">*</span><span class="nx">_type</span> <span class="c1">// element type</span>
+	<span class="nx">sendx</span>    <span class="kt">uint</span>   <span class="c1">// send index</span>
+	<span class="nx">recvx</span>    <span class="kt">uint</span>   <span class="c1">// receive index</span>
+	<span class="nx">recvq</span>    <span class="nx">waitq</span>  <span class="c1">// list of recv waiters</span>
+	<span class="nx">sendq</span>    <span class="nx">waitq</span>  <span class="c1">// list of send waiters</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-6">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-6">&#182;</a>
+              </div>
+                <p><em>Original Comment:</em></p>
+
+<p><em>lock protects all fields in hchan, as well as several
+fields in sudogs blocked on this channel.</em></p>
+
+<p><em>Do not change another G&rsquo;s status while holding this lock
+(in particular, do not ready a G), as this can deadlock
+with stack shrinking.</em></p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre>	<span class="nx">lock</span> <span class="nx">mutex</span>
+<span class="p">}</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-7">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-7">&#182;</a>
+              </div>
+                <h2>Invariants</h2>
+
+<p>Through out there are some invariants when it come to channels.
+1) At least one of c.sendq and c.recvq is empty.
+<em>For buffered channels, also:</em>
+2) c.qcount &gt; 0 implies that c.recvq is empty.
+3) c.qcount &lt; c.dataqsiz implies that c.sendq is empty.</p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-8">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-8">&#182;</a>
+              </div>
+                <p><code>waitq struct</code> is a linked list of <code>sudog</code> structs. sudog represents a goroutine in a channel wait list, see the definition of <a href="https://github.com/golang/go/blob/7fdec6216c0a25c6dbcc8159b755da6682dd9080/src/runtime/runtime2.go#L235"><code>type sudog</code></a> in the github source of golang.</p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre><span class="kd">type</span> <span class="nx">waitq</span> <span class="kd">struct</span> <span class="p">{</span>
+	<span class="nx">first</span> <span class="o">*</span><span class="nx">sudog</span>
+	<span class="nx">last</span>  <span class="o">*</span><span class="nx">sudog</span>
+<span class="p">}</span>
+
+<span class="kd">func</span> <span class="nx">reflect_makechan</span><span class="p">(</span><span class="nx">t</span> <span class="o">*</span><span class="nx">chantype</span><span class="p">,</span> <span class="nx">size</span> <span class="kt">int64</span><span class="p">)</span> <span class="o">*</span><span class="nx">hchan</span> <span class="p">{</span>
+	<span class="k">return</span> <span class="nx">makechan</span><span class="p">(</span><span class="nx">t</span><span class="p">,</span> <span class="nx">size</span><span class="p">)</span>
+<span class="p">}</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-9">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-9">&#182;</a>
+              </div>
+                <h2>Creating channel</h2>
+
+<p><code>makechan</code> creates the channel as such, it is a direct translation
+of <code>make(chan type)</code>, <code>size</code> can be zero. The <code>chantype</code> represents
+the channel as a
+<a href="https://github.com/golang/go/blob/797dc584577c66ee1e181a3f423133ee83647247/src/runtime/type.go#L346">type</a>
+contains information like what elements are transferred.</p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre><span class="kd">func</span> <span class="nx">makechan</span><span class="p">(</span><span class="nx">t</span> <span class="o">*</span><span class="nx">chantype</span><span class="p">,</span> <span class="nx">size</span> <span class="kt">int64</span><span class="p">)</span> <span class="o">*</span><span class="nx">hchan</span> <span class="p">{</span>
+	<span class="nx">elem</span> <span class="o">:=</span> <span class="nx">t</span><span class="p">.</span><span class="nx">elem</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-10">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-10">&#182;</a>
+              </div>
+                <p>This block should not happen but just to make sure :)</p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre>	<span class="k">if</span> <span class="nx">elem</span><span class="p">.</span><span class="nx">size</span> <span class="o">&gt;=</span> <span class="mi">1</span><span class="o">&lt;&lt;</span><span class="mi">16</span> <span class="p">{</span>
+		<span class="nx">throw</span><span class="p">(</span><span class="s">&quot;makechan: invalid channel element type&quot;</span><span class="p">)</span>
+	<span class="p">}</span>
+	<span class="k">if</span> <span class="nx">hchanSize</span><span class="o">%</span><span class="nx">maxAlign</span> <span class="o">!=</span> <span class="mi">0</span> <span class="o">||</span> <span class="nx">elem</span><span class="p">.</span><span class="nx">align</span> <span class="p">&gt;</span> <span class="nx">maxAlign</span> <span class="p">{</span>
+		<span class="nx">throw</span><span class="p">(</span><span class="s">&quot;makechan: bad alignment&quot;</span><span class="p">)</span>
+	<span class="p">}</span>
+	<span class="k">if</span> <span class="nx">size</span> <span class="p">&lt;</span> <span class="mi">0</span> <span class="o">||</span> <span class="nb">int64</span><span class="p">(</span><span class="nb">uintptr</span><span class="p">(</span><span class="nx">size</span><span class="p">))</span> <span class="o">!=</span> <span class="nx">size</span> <span class="o">||</span> <span class="p">(</span><span class="nx">elem</span><span class="p">.</span><span class="nx">size</span> <span class="p">&gt;</span> <span class="mi">0</span> <span class="o">&amp;&amp;</span> <span class="nb">uintptr</span><span class="p">(</span><span class="nx">size</span><span class="p">)</span> <span class="p">&gt;</span> <span class="p">(</span><span class="nx">_MaxMem</span><span class="o">-</span><span class="nx">hchanSize</span><span class="p">)</span><span class="o">/</span><span class="nx">elem</span><span class="p">.</span><span class="nx">size</span><span class="p">)</span> <span class="p">{</span>
+		<span class="nb">panic</span><span class="p">(</span><span class="nx">plainError</span><span class="p">(</span><span class="s">&quot;makechan: size out of range&quot;</span><span class="p">))</span>
+	<span class="p">}</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-11">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-11">&#182;</a>
+              </div>
+                <p>First comes the allocation of the <code>hchan.buf</code> in one go for unbuffered channel or channel with elements of no size (<code>make(chan struct{})</code>).</p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre>	<span class="kd">var</span> <span class="nx">c</span> <span class="o">*</span><span class="nx">hchan</span>
+	<span class="k">if</span> <span class="nx">elem</span><span class="p">.</span><span class="nx">kind</span><span class="o">&amp;</span><span class="nx">kindNoPointers</span> <span class="o">!=</span> <span class="mi">0</span> <span class="o">||</span> <span class="nx">size</span> <span class="o">==</span> <span class="mi">0</span> <span class="p">{</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-12">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-12">&#182;</a>
+              </div>
+                <p><em>Original Comments:</em></p>
+
+<p><em>Allocate memory in one call.
+Hchan does not contain pointers interesting for GC in this case:
+buf points into the same allocation, elemtype is persistent.
+SudoG&rsquo;s are referenced from their owning thread so they can&rsquo;t be collected.</em></p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre>		<span class="nx">c</span> <span class="p">=</span> <span class="p">(</span><span class="o">*</span><span class="nx">hchan</span><span class="p">)(</span><span class="nx">mallocgc</span><span class="p">(</span><span class="nx">hchanSize</span><span class="o">+</span><span class="nb">uintptr</span><span class="p">(</span><span class="nx">size</span><span class="p">)</span><span class="o">*</span><span class="nx">elem</span><span class="p">.</span><span class="nx">size</span><span class="p">,</span> <span class="kc">nil</span><span class="p">,</span> <span class="kc">true</span><span class="p">))</span>
+		<span class="k">if</span> <span class="nx">size</span> <span class="p">&gt;</span> <span class="mi">0</span> <span class="o">&amp;&amp;</span> <span class="nx">elem</span><span class="p">.</span><span class="nx">size</span> <span class="o">!=</span> <span class="mi">0</span> <span class="p">{</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-13">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-13">&#182;</a>
+              </div>
+                <p><code>add</code> makes the old fashioned pointer arithmetics, base + offset</p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre>			<span class="nx">c</span><span class="p">.</span><span class="nx">buf</span> <span class="p">=</span> <span class="nx">add</span><span class="p">(</span><span class="nx">unsafe</span><span class="p">.</span><span class="nx">Pointer</span><span class="p">(</span><span class="nx">c</span><span class="p">),</span> <span class="nx">hchanSize</span><span class="p">)</span>
+		<span class="p">}</span> <span class="k">else</span> <span class="p">{</span>
+			<span class="nx">c</span><span class="p">.</span><span class="nx">buf</span> <span class="p">=</span> <span class="nx">unsafe</span><span class="p">.</span><span class="nx">Pointer</span><span class="p">(</span><span class="nx">c</span><span class="p">)</span>
+		<span class="p">}</span>
+	<span class="p">}</span> <span class="k">else</span> <span class="p">{</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-14">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-14">&#182;</a>
+              </div>
+                <p>Allocates the <code>hchan</code> struct first and then the ring buffer,
+buffered channels with non-zero sized elements.</p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre>		<span class="nx">c</span> <span class="p">=</span> <span class="nb">new</span><span class="p">(</span><span class="nx">hchan</span><span class="p">)</span>
+		<span class="nx">c</span><span class="p">.</span><span class="nx">buf</span> <span class="p">=</span> <span class="nx">newarray</span><span class="p">(</span><span class="nx">elem</span><span class="p">,</span> <span class="nb">int</span><span class="p">(</span><span class="nx">size</span><span class="p">))</span>
+	<span class="p">}</span>
+	<span class="nx">c</span><span class="p">.</span><span class="nx">elemsize</span> <span class="p">=</span> <span class="nb">uint16</span><span class="p">(</span><span class="nx">elem</span><span class="p">.</span><span class="nx">size</span><span class="p">)</span>
+	<span class="nx">c</span><span class="p">.</span><span class="nx">elemtype</span> <span class="p">=</span> <span class="nx">elem</span>
+	<span class="nx">c</span><span class="p">.</span><span class="nx">dataqsiz</span> <span class="p">=</span> <span class="nb">uint</span><span class="p">(</span><span class="nx">size</span><span class="p">)</span>
+
+	<span class="k">if</span> <span class="nx">debugChan</span> <span class="p">{</span>
+		<span class="nb">print</span><span class="p">(</span><span class="s">&quot;makechan: chan=&quot;</span><span class="p">,</span> <span class="nx">c</span><span class="p">,</span> <span class="s">&quot;; elemsize=&quot;</span><span class="p">,</span> <span class="nx">elem</span><span class="p">.</span><span class="nx">size</span><span class="p">,</span> <span class="s">&quot;; elemalg=&quot;</span><span class="p">,</span> <span class="nx">elem</span><span class="p">.</span><span class="nx">alg</span><span class="p">,</span> <span class="s">&quot;; dataqsiz=&quot;</span><span class="p">,</span> <span class="nx">size</span><span class="p">,</span> <span class="s">&quot;\n&quot;</span><span class="p">)</span>
+	<span class="p">}</span>
+	<span class="k">return</span> <span class="nx">c</span>
+<span class="p">}</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-15">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-15">&#182;</a>
+              </div>
+                <p><a name="chanbuf"/> <code>chanbuf(c, i)</code> is a helper function which
+returns pointer to the i&rsquo;th slot in the channels ring buffer.</p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre><span class="kd">func</span> <span class="nx">chanbuf</span><span class="p">(</span><span class="nx">c</span> <span class="o">*</span><span class="nx">hchan</span><span class="p">,</span> <span class="nx">i</span> <span class="kt">uint</span><span class="p">)</span> <span class="nx">unsafe</span><span class="p">.</span><span class="nx">Pointer</span> <span class="p">{</span>
+	<span class="k">return</span> <span class="nx">add</span><span class="p">(</span><span class="nx">c</span><span class="p">.</span><span class="nx">buf</span><span class="p">,</span> <span class="nb">uintptr</span><span class="p">(</span><span class="nx">i</span><span class="p">)</span><span class="o">*</span><span class="nb">uintptr</span><span class="p">(</span><span class="nx">c</span><span class="p">.</span><span class="nx">elemsize</span><span class="p">))</span>
+<span class="p">}</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-16">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-16">&#182;</a>
+              </div>
+                <h2>Send</h2>
+
+<p>entry point for <code>c &lt;- x</code> from compiled code</p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre><span class="kd">func</span> <span class="nx">chansend1</span><span class="p">(</span><span class="nx">t</span> <span class="o">*</span><span class="nx">chantype</span><span class="p">,</span> <span class="nx">c</span> <span class="o">*</span><span class="nx">hchan</span><span class="p">,</span> <span class="nx">elem</span> <span class="nx">unsafe</span><span class="p">.</span><span class="nx">Pointer</span><span class="p">)</span> <span class="p">{</span>
+	<span class="nx">chansend</span><span class="p">(</span><span class="nx">t</span><span class="p">,</span> <span class="nx">c</span><span class="p">,</span> <span class="nx">elem</span><span class="p">,</span> <span class="kc">true</span><span class="p">,</span> <span class="nx">getcallerpc</span><span class="p">(</span><span class="nx">unsafe</span><span class="p">.</span><span class="nx">Pointer</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">t</span><span class="p">)))</span>
+<span class="p">}</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-17">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-17">&#182;</a>
+              </div>
+                <p><a name = "chansend" />
+<code>chansend</code> is the implementation of the <code>c &lt;- x</code></p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-18">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-18">&#182;</a>
+              </div>
+                <ul>
+<li><code>ep</code> is the pointer to the element in question (on stack of sending goroutine)</li>
+<li><code>block</code> comes from the <code>select</code> statement, should the sender block or not? If not then the goroutine will not sleep but return if it could not complete</li>
+<li><code>callerpc</code> is callers program counter, where the caller is.</li>
+</ul>
+
+<p>The return value is <code>bool</code> indicating if the send happened or not
+(useful for <code>select</code> again)</p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre><span class="kd">func</span> <span class="nx">chansend</span><span class="p">(</span><span class="nx">t</span> <span class="o">*</span><span class="nx">chantype</span><span class="p">,</span> <span class="nx">c</span> <span class="o">*</span><span class="nx">hchan</span><span class="p">,</span> <span class="nx">ep</span> <span class="nx">unsafe</span><span class="p">.</span><span class="nx">Pointer</span><span class="p">,</span> <span class="nx">block</span> <span class="kt">bool</span><span class="p">,</span> <span class="nx">callerpc</span> <span class="kt">uintptr</span><span class="p">)</span> <span class="kt">bool</span> <span class="p">{</span>
+	<span class="k">if</span> <span class="nx">raceenabled</span> <span class="p">{</span>
+		<span class="nx">raceReadObjectPC</span><span class="p">(</span><span class="nx">t</span><span class="p">.</span><span class="nx">elem</span><span class="p">,</span> <span class="nx">ep</span><span class="p">,</span> <span class="nx">callerpc</span><span class="p">,</span> <span class="nx">funcPC</span><span class="p">(</span><span class="nx">chansend</span><span class="p">))</span>
+	<span class="p">}</span>
+	<span class="k">if</span> <span class="nx">msanenabled</span> <span class="p">{</span>
+		<span class="nx">msanread</span><span class="p">(</span><span class="nx">ep</span><span class="p">,</span> <span class="nx">t</span><span class="p">.</span><span class="nx">elem</span><span class="p">.</span><span class="nx">size</span><span class="p">)</span>
+	<span class="p">}</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-19">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-19">&#182;</a>
+              </div>
+                <p><strong>AXIOM #1</strong> - A send to a <code>nil</code> channel blocks forever</p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre>	<span class="k">if</span> <span class="nx">c</span> <span class="o">==</span> <span class="kc">nil</span> <span class="p">{</span>
+		<span class="k">if</span> <span class="p">!</span><span class="nx">block</span> <span class="p">{</span>
+			<span class="k">return</span> <span class="kc">false</span>
+		<span class="p">}</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-20">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-20">&#182;</a>
+              </div>
+                <p><code>gopark</code> puts the calling goroutine to sleep queue</p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre>		<span class="nx">gopark</span><span class="p">(</span><span class="kc">nil</span><span class="p">,</span> <span class="kc">nil</span><span class="p">,</span> <span class="s">&quot;chan send (nil chan)&quot;</span><span class="p">,</span> <span class="nx">traceEvGoStop</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span>
+		<span class="nx">throw</span><span class="p">(</span><span class="s">&quot;unreachable&quot;</span><span class="p">)</span>
+	<span class="p">}</span>
+
+	<span class="k">if</span> <span class="nx">debugChan</span> <span class="p">{</span>
+		<span class="nb">print</span><span class="p">(</span><span class="s">&quot;chansend: chan=&quot;</span><span class="p">,</span> <span class="nx">c</span><span class="p">,</span> <span class="s">&quot;\n&quot;</span><span class="p">)</span>
+	<span class="p">}</span>
+
+	<span class="k">if</span> <span class="nx">raceenabled</span> <span class="p">{</span>
+		<span class="nx">racereadpc</span><span class="p">(</span><span class="nx">unsafe</span><span class="p">.</span><span class="nx">Pointer</span><span class="p">(</span><span class="nx">c</span><span class="p">),</span> <span class="nx">callerpc</span><span class="p">,</span> <span class="nx">funcPC</span><span class="p">(</span><span class="nx">chansend</span><span class="p">))</span>
+	<span class="p">}</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-21">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-21">&#182;</a>
+              </div>
+                <p><em>Original Comments:
+Fast path: check for failed non-blocking operation without acquiring the lock.</em></p>
+
+<p><em>After observing that the channel is not closed, we observe that the channel is
+not ready for sending. Each of these observations is a single word-sized read
+(first c.closed and second c.recvq.first or c.qcount depending on kind of channel).
+Because a closed channel cannot transition from &lsquo;ready for sending&rsquo; to
+&lsquo;not ready for sending&rsquo;, even if the channel is closed between the two observations,
+they imply a moment between the two when the channel was both not yet closed
+and not ready for sending. We behave as if we observed the channel at that moment,
+and report that the send cannot proceed.</em></p>
+
+<p><em>It is okay if the reads are reordered here: if we observe that the channel is not
+ready for sending and then observe that it is not closed, that implies that the
+channel wasn&rsquo;t closed during the first observation.</em></p>
+
+<p>Fast check whether there is a chance to send.</p>
+
+<p>If not blocking and the channel is not closed and one of the
+following conditions are met bail out and return false, we
+can&rsquo;t send at the moment.</p>
+
+<ol>
+<li>buffer has zero size and there is no receiver (unbuffered channel)</li>
+<li>buffer have size and is full (full buffered channel)</li>
+</ol>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre>	<span class="k">if</span> <span class="p">!</span><span class="nx">block</span> <span class="o">&amp;&amp;</span> <span class="nx">c</span><span class="p">.</span><span class="nx">closed</span> <span class="o">==</span> <span class="mi">0</span> <span class="o">&amp;&amp;</span> <span class="p">((</span><span class="nx">c</span><span class="p">.</span><span class="nx">dataqsiz</span> <span class="o">==</span> <span class="mi">0</span> <span class="o">&amp;&amp;</span> <span class="nx">c</span><span class="p">.</span><span class="nx">recvq</span><span class="p">.</span><span class="nx">first</span> <span class="o">==</span> <span class="kc">nil</span><span class="p">)</span> <span class="o">||</span>
+		<span class="p">(</span><span class="nx">c</span><span class="p">.</span><span class="nx">dataqsiz</span> <span class="p">&gt;</span> <span class="mi">0</span> <span class="o">&amp;&amp;</span> <span class="nx">c</span><span class="p">.</span><span class="nx">qcount</span> <span class="o">==</span> <span class="nx">c</span><span class="p">.</span><span class="nx">dataqsiz</span><span class="p">))</span> <span class="p">{</span>
+		<span class="k">return</span> <span class="kc">false</span>
+	<span class="p">}</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-22">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-22">&#182;</a>
+              </div>
+                <p>We acquire the <code>lock</code> so nobody is going to change the state
+under our hands.</p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre>	<span class="kd">var</span> <span class="nx">t0</span> <span class="kt">int64</span>
+	<span class="k">if</span> <span class="nx">blockprofilerate</span> <span class="p">&gt;</span> <span class="mi">0</span> <span class="p">{</span>
+		<span class="nx">t0</span> <span class="p">=</span> <span class="nx">cputicks</span><span class="p">()</span>
+	<span class="p">}</span>
+
+	<span class="nx">lock</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">c</span><span class="p">.</span><span class="nx">lock</span><span class="p">)</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-23">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-23">&#182;</a>
+              </div>
+                <p><a name="axiom2"/>
+<strong>AXIOM #2</strong> - A send to a closed channel panics</p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre>	<span class="k">if</span> <span class="nx">c</span><span class="p">.</span><span class="nx">closed</span> <span class="o">!=</span> <span class="mi">0</span> <span class="p">{</span>
+		<span class="nx">unlock</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">c</span><span class="p">.</span><span class="nx">lock</span><span class="p">)</span>
+		<span class="nb">panic</span><span class="p">(</span><span class="nx">plainError</span><span class="p">(</span><span class="s">&quot;send on closed channel&quot;</span><span class="p">))</span>
+	<span class="p">}</span>
+
+	<span class="k">if</span> <span class="nx">sg</span> <span class="o">:=</span> <span class="nx">c</span><span class="p">.</span><span class="nx">recvq</span><span class="p">.</span><span class="nx">dequeue</span><span class="p">();</span> <span class="nx">sg</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-24">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-24">&#182;</a>
+              </div>
+                <p>Found a waiting receiver. We pass the value we want to send
+directly to the receiver, bypassing the channel buffer (if any).
+<a href="#send"><code>send</code></a></p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre>		<span class="nx">send</span><span class="p">(</span><span class="nx">c</span><span class="p">,</span> <span class="nx">sg</span><span class="p">,</span> <span class="nx">ep</span><span class="p">,</span> <span class="kd">func</span><span class="p">()</span> <span class="p">{</span> <span class="nx">unlock</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">c</span><span class="p">.</span><span class="nx">lock</span><span class="p">)</span> <span class="p">})</span>
+		<span class="k">return</span> <span class="kc">true</span>
+	<span class="p">}</span>
+
+	<span class="k">if</span> <span class="nx">c</span><span class="p">.</span><span class="nx">qcount</span> <span class="p">&lt;</span> <span class="nx">c</span><span class="p">.</span><span class="nx">dataqsiz</span> <span class="p">{</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-25">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-25">&#182;</a>
+              </div>
+                <p>Space is available in the channel buffer. Enqueue the element to send.
+<code>qp</code> points to <code>sendx</code> index in the <code>hchan.buf</code> ring buffer.
+<a href="#chanbuf"><code>chanbuf</code></a></p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre>		<span class="nx">qp</span> <span class="o">:=</span> <span class="nx">chanbuf</span><span class="p">(</span><span class="nx">c</span><span class="p">,</span> <span class="nx">c</span><span class="p">.</span><span class="nx">sendx</span><span class="p">)</span>
+		<span class="k">if</span> <span class="nx">raceenabled</span> <span class="p">{</span>
+			<span class="nx">raceacquire</span><span class="p">(</span><span class="nx">qp</span><span class="p">)</span>
+			<span class="nx">racerelease</span><span class="p">(</span><span class="nx">qp</span><span class="p">)</span>
+		<span class="p">}</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-26">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-26">&#182;</a>
+              </div>
+                <p>Move the element to the ring buffer.</p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre>		<span class="nx">typedmemmove</span><span class="p">(</span><span class="nx">c</span><span class="p">.</span><span class="nx">elemtype</span><span class="p">,</span> <span class="nx">qp</span><span class="p">,</span> <span class="nx">ep</span><span class="p">)</span>
+		<span class="nx">c</span><span class="p">.</span><span class="nx">sendx</span><span class="o">++</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-27">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-27">&#182;</a>
+              </div>
+                <p>Because it is a ring buffer we wrap the <code>sendx</code> if it is
+pointing beyond the buffer size.</p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre>		<span class="k">if</span> <span class="nx">c</span><span class="p">.</span><span class="nx">sendx</span> <span class="o">==</span> <span class="nx">c</span><span class="p">.</span><span class="nx">dataqsiz</span> <span class="p">{</span>
+			<span class="nx">c</span><span class="p">.</span><span class="nx">sendx</span> <span class="p">=</span> <span class="mi">0</span>
+		<span class="p">}</span>
+		<span class="nx">c</span><span class="p">.</span><span class="nx">qcount</span><span class="o">++</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-28">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-28">&#182;</a>
+              </div>
+                <p>Unlock and return true as the value was sent.</p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre>		<span class="nx">unlock</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">c</span><span class="p">.</span><span class="nx">lock</span><span class="p">)</span>
+		<span class="k">return</span> <span class="kc">true</span>
+	<span class="p">}</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-29">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-29">&#182;</a>
+              </div>
+                <p>We are at the point where we couldn&rsquo;t store the value in the
+ring buffer as it is full, so if it should not block bail out now.</p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre>	<span class="k">if</span> <span class="p">!</span><span class="nx">block</span> <span class="p">{</span>
+		<span class="nx">unlock</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">c</span><span class="p">.</span><span class="nx">lock</span><span class="p">)</span>
+		<span class="k">return</span> <span class="kc">false</span>
+	<span class="p">}</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-30">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-30">&#182;</a>
+              </div>
+                <p>Block on the channel. Some receiver will complete our operation
+for us.  Create new <code>sudog</code> struct for current sender and
+channel and enqueue it to the wait linked list.
+gp is a <code>g</code> struct representing goroutine see the <a href="https://github.com/golang/go/blob/7fdec6216c0a25c6dbcc8159b755da6682dd9080/src/runtime/runtime2.go#L306">definition</a></p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre>	<span class="nx">gp</span> <span class="o">:=</span> <span class="nx">getg</span><span class="p">()</span>
+	<span class="nx">mysg</span> <span class="o">:=</span> <span class="nx">acquireSudog</span><span class="p">()</span>
+	<span class="nx">mysg</span><span class="p">.</span><span class="nx">releasetime</span> <span class="p">=</span> <span class="mi">0</span>
+	<span class="k">if</span> <span class="nx">t0</span> <span class="o">!=</span> <span class="mi">0</span> <span class="p">{</span>
+		<span class="nx">mysg</span><span class="p">.</span><span class="nx">releasetime</span> <span class="p">=</span> <span class="o">-</span><span class="mi">1</span>
+	<span class="p">}</span>
+	<span class="nx">mysg</span><span class="p">.</span><span class="nx">elem</span> <span class="p">=</span> <span class="nx">ep</span>
+	<span class="nx">mysg</span><span class="p">.</span><span class="nx">waitlink</span> <span class="p">=</span> <span class="kc">nil</span>
+	<span class="nx">mysg</span><span class="p">.</span><span class="nx">g</span> <span class="p">=</span> <span class="nx">gp</span>
+	<span class="nx">mysg</span><span class="p">.</span><span class="nx">selectdone</span> <span class="p">=</span> <span class="kc">nil</span>
+	<span class="nx">mysg</span><span class="p">.</span><span class="nx">c</span> <span class="p">=</span> <span class="nx">c</span>
+	<span class="nx">gp</span><span class="p">.</span><span class="nx">waiting</span> <span class="p">=</span> <span class="nx">mysg</span>
+	<span class="nx">gp</span><span class="p">.</span><span class="nx">param</span> <span class="p">=</span> <span class="kc">nil</span>
+	<span class="nx">c</span><span class="p">.</span><span class="nx">sendq</span><span class="p">.</span><span class="nx">enqueue</span><span class="p">(</span><span class="nx">mysg</span><span class="p">)</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-31">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-31">&#182;</a>
+              </div>
+                <p>Here the goroutine goes to sleep and scheduler will wake it
+once there is a receiver on this channel. The lock is released
+inside the function.</p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre>	<span class="nx">goparkunlock</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">c</span><span class="p">.</span><span class="nx">lock</span><span class="p">,</span> <span class="s">&quot;chan send&quot;</span><span class="p">,</span> <span class="nx">traceEvGoBlockSend</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-32">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-32">&#182;</a>
+              </div>
+                <p>This comes after the blocking, the goroutine is awaken.  We
+don&rsquo;t store the data anymore, a receiving goroutine
+handled the transfer already.</p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre>	<span class="k">if</span> <span class="nx">mysg</span> <span class="o">!=</span> <span class="nx">gp</span><span class="p">.</span><span class="nx">waiting</span> <span class="p">{</span>
+		<span class="nx">throw</span><span class="p">(</span><span class="s">&quot;G waiting list is corrupted&quot;</span><span class="p">)</span>
+	<span class="p">}</span>
+	<span class="nx">gp</span><span class="p">.</span><span class="nx">waiting</span> <span class="p">=</span> <span class="kc">nil</span>
+	<span class="k">if</span> <span class="nx">gp</span><span class="p">.</span><span class="nx">param</span> <span class="o">==</span> <span class="kc">nil</span> <span class="p">{</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-33">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-33">&#182;</a>
+              </div>
+                <p>Goroutines <code>param</code> can be <code>nil</code> only if the channel was
+closed. Spurious wakeups should not happen</p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre>		<span class="k">if</span> <span class="nx">c</span><span class="p">.</span><span class="nx">closed</span> <span class="o">==</span> <span class="mi">0</span> <span class="p">{</span>
+			<span class="nx">throw</span><span class="p">(</span><span class="s">&quot;chansend: spurious wakeup&quot;</span><span class="p">)</span>
+		<span class="p">}</span>
+		<span class="nb">panic</span><span class="p">(</span><span class="nx">plainError</span><span class="p">(</span><span class="s">&quot;send on closed channel&quot;</span><span class="p">))</span>
+	<span class="p">}</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-34">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-34">&#182;</a>
+              </div>
+                <p>Release everything and return, the value was sent.</p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre>	<span class="nx">gp</span><span class="p">.</span><span class="nx">param</span> <span class="p">=</span> <span class="kc">nil</span>
+	<span class="k">if</span> <span class="nx">mysg</span><span class="p">.</span><span class="nx">releasetime</span> <span class="p">&gt;</span> <span class="mi">0</span> <span class="p">{</span>
+		<span class="nx">blockevent</span><span class="p">(</span><span class="nx">mysg</span><span class="p">.</span><span class="nx">releasetime</span><span class="o">-</span><span class="nx">t0</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span>
+	<span class="p">}</span>
+	<span class="nx">mysg</span><span class="p">.</span><span class="nx">c</span> <span class="p">=</span> <span class="kc">nil</span>
+	<span class="nx">releaseSudog</span><span class="p">(</span><span class="nx">mysg</span><span class="p">)</span>
+	<span class="k">return</span> <span class="kc">true</span>
+<span class="p">}</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-35">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-35">&#182;</a>
+              </div>
+                <p><a name="send"></a>
+<code>send</code> processes a send operation on an empty channel c.
+The value <code>ep</code> sent by the sender is copied to the receiver <code>sg</code>.
+The receiver is then woken up to go on its merry way.</p>
+
+<p><em>Conditions:</em></p>
+
+<ul>
+<li>Channel c must be empty and locked.</li>
+<li>Send unlocks it with <code>unlockf</code> function.</li>
+<li><code>sg</code> must already be dequeued from c.</li>
+<li><code>ep</code> must be non-nil and point to the heap or the caller&rsquo;s stack.</li>
+</ul>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre><span class="kd">func</span> <span class="nx">send</span><span class="p">(</span><span class="nx">c</span> <span class="o">*</span><span class="nx">hchan</span><span class="p">,</span> <span class="nx">sg</span> <span class="o">*</span><span class="nx">sudog</span><span class="p">,</span> <span class="nx">ep</span> <span class="nx">unsafe</span><span class="p">.</span><span class="nx">Pointer</span><span class="p">,</span> <span class="nx">unlockf</span> <span class="kd">func</span><span class="p">())</span> <span class="p">{</span>
+	<span class="k">if</span> <span class="nx">raceenabled</span> <span class="p">{</span>
+		<span class="k">if</span> <span class="nx">c</span><span class="p">.</span><span class="nx">dataqsiz</span> <span class="o">==</span> <span class="mi">0</span> <span class="p">{</span>
+			<span class="nx">racesync</span><span class="p">(</span><span class="nx">c</span><span class="p">,</span> <span class="nx">sg</span><span class="p">)</span>
+		<span class="p">}</span> <span class="k">else</span> <span class="p">{</span>
+			<span class="nx">qp</span> <span class="o">:=</span> <span class="nx">chanbuf</span><span class="p">(</span><span class="nx">c</span><span class="p">,</span> <span class="nx">c</span><span class="p">.</span><span class="nx">recvx</span><span class="p">)</span>
+			<span class="nx">raceacquire</span><span class="p">(</span><span class="nx">qp</span><span class="p">)</span>
+			<span class="nx">racerelease</span><span class="p">(</span><span class="nx">qp</span><span class="p">)</span>
+			<span class="nx">raceacquireg</span><span class="p">(</span><span class="nx">sg</span><span class="p">.</span><span class="nx">g</span><span class="p">,</span> <span class="nx">qp</span><span class="p">)</span>
+			<span class="nx">racereleaseg</span><span class="p">(</span><span class="nx">sg</span><span class="p">.</span><span class="nx">g</span><span class="p">,</span> <span class="nx">qp</span><span class="p">)</span>
+			<span class="nx">c</span><span class="p">.</span><span class="nx">recvx</span><span class="o">++</span>
+			<span class="k">if</span> <span class="nx">c</span><span class="p">.</span><span class="nx">recvx</span> <span class="o">==</span> <span class="nx">c</span><span class="p">.</span><span class="nx">dataqsiz</span> <span class="p">{</span>
+				<span class="nx">c</span><span class="p">.</span><span class="nx">recvx</span> <span class="p">=</span> <span class="mi">0</span>
+			<span class="p">}</span>
+			<span class="nx">c</span><span class="p">.</span><span class="nx">sendx</span> <span class="p">=</span> <span class="nx">c</span><span class="p">.</span><span class="nx">recvx</span> <span class="c1">// c.sendx = (c.sendx+1) % c.dataqsiz</span>
+		<span class="p">}</span>
+	<span class="p">}</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-36">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-36">&#182;</a>
+              </div>
+                <p><code>sg.elem</code> is a pointer to the channel element type and holds the sent
+value so must not be nil. <a href="#sendDirect">&lsquo;sendDirect&rsquo;</a> is where it happens.</p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre>	<span class="k">if</span> <span class="nx">sg</span><span class="p">.</span><span class="nx">elem</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
+		<span class="nx">sendDirect</span><span class="p">(</span><span class="nx">c</span><span class="p">.</span><span class="nx">elemtype</span><span class="p">,</span> <span class="nx">sg</span><span class="p">,</span> <span class="nx">ep</span><span class="p">)</span>
+		<span class="nx">sg</span><span class="p">.</span><span class="nx">elem</span> <span class="p">=</span> <span class="kc">nil</span>
+	<span class="p">}</span>
+	<span class="nx">gp</span> <span class="o">:=</span> <span class="nx">sg</span><span class="p">.</span><span class="nx">g</span>
+	<span class="nx">unlockf</span><span class="p">()</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-37">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-37">&#182;</a>
+              </div>
+                <p>Set the receiver <code>g.param</code> so it is non-nil to signal that the channel was not closed. Used after the <a href="#rcv_wakeup">wakeup</a>.</p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre>	<span class="nx">gp</span><span class="p">.</span><span class="nx">param</span> <span class="p">=</span> <span class="nx">unsafe</span><span class="p">.</span><span class="nx">Pointer</span><span class="p">(</span><span class="nx">sg</span><span class="p">)</span>
+	<span class="k">if</span> <span class="nx">sg</span><span class="p">.</span><span class="nx">releasetime</span> <span class="o">!=</span> <span class="mi">0</span> <span class="p">{</span>
+		<span class="nx">sg</span><span class="p">.</span><span class="nx">releasetime</span> <span class="p">=</span> <span class="nx">cputicks</span><span class="p">()</span>
+	<span class="p">}</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-38">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-38">&#182;</a>
+              </div>
+                <p>Wake the receiving goroutine</p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre>	<span class="nx">goready</span><span class="p">(</span><span class="nx">gp</span><span class="p">,</span> <span class="mi">4</span><span class="p">)</span>
+<span class="p">}</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-39">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-39">&#182;</a>
+              </div>
+                <p><a name ="sendDirect"/>
+<code>sendDirect</code> is where the transfer happens. See the original comments.</p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre><span class="kd">func</span> <span class="nx">sendDirect</span><span class="p">(</span><span class="nx">t</span> <span class="o">*</span><span class="nx">_type</span><span class="p">,</span> <span class="nx">sg</span> <span class="o">*</span><span class="nx">sudog</span><span class="p">,</span> <span class="nx">src</span> <span class="nx">unsafe</span><span class="p">.</span><span class="nx">Pointer</span><span class="p">)</span> <span class="p">{</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-40">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-40">&#182;</a>
+              </div>
+                <p><em>Original Comments:</em></p>
+
+<p><em>Send on an unbuffered or empty-buffered channel is the only operation
+in the entire runtime where one goroutine
+writes to the stack of another goroutine. The GC assumes that
+stack writes only happen when the goroutine is running and are
+only done by that goroutine. Using a write barrier is sufficient to
+make up for violating that assumption, but the write barrier has to work.
+typedmemmove will call heapBitsBulkBarrier, but the target bytes
+are not in the heap, so that will not help. We arrange to call
+memmove and typeBitsBulkBarrier instead.</em></p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-41">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-41">&#182;</a>
+              </div>
+                <p><em>Once we read sg.elem out of sg, it will no longer
+be updated if the destination&rsquo;s stack gets copied (shrunk).
+So make sure that no preemption points can happen between read &amp; use.</em></p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre>	<span class="nx">dst</span> <span class="o">:=</span> <span class="nx">sg</span><span class="p">.</span><span class="nx">elem</span>
+	<span class="nx">memmove</span><span class="p">(</span><span class="nx">dst</span><span class="p">,</span> <span class="nx">src</span><span class="p">,</span> <span class="nx">t</span><span class="p">.</span><span class="nx">size</span><span class="p">)</span>
+	<span class="nx">typeBitsBulkBarrier</span><span class="p">(</span><span class="nx">t</span><span class="p">,</span> <span class="nb">uintptr</span><span class="p">(</span><span class="nx">dst</span><span class="p">),</span> <span class="nx">t</span><span class="p">.</span><span class="nx">size</span><span class="p">)</span>
+<span class="p">}</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-42">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-42">&#182;</a>
+              </div>
+                <h2>Close</h2>
+
+<p>Direct translation of <code>close(chan)</code></p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre><span class="kd">func</span> <span class="nx">closechan</span><span class="p">(</span><span class="nx">c</span> <span class="o">*</span><span class="nx">hchan</span><span class="p">)</span> <span class="p">{</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-43">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-43">&#182;</a>
+              </div>
+                <p>Closing non existing channel panics!</p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre>	<span class="k">if</span> <span class="nx">c</span> <span class="o">==</span> <span class="kc">nil</span> <span class="p">{</span>
+		<span class="nb">panic</span><span class="p">(</span><span class="nx">plainError</span><span class="p">(</span><span class="s">&quot;close of nil channel&quot;</span><span class="p">))</span>
+	<span class="p">}</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-44">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-44">&#182;</a>
+              </div>
+                <p>Lock the channel so we don&rsquo;t mess other goroutines.</p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre>	<span class="nx">lock</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">c</span><span class="p">.</span><span class="nx">lock</span><span class="p">)</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-45">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-45">&#182;</a>
+              </div>
+                <p>Double closing panics. Closing on channel is the last signal
+saying there will be no more, doing the same thing again
+violates it.</p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre>	<span class="k">if</span> <span class="nx">c</span><span class="p">.</span><span class="nx">closed</span> <span class="o">!=</span> <span class="mi">0</span> <span class="p">{</span>
+		<span class="nx">unlock</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">c</span><span class="p">.</span><span class="nx">lock</span><span class="p">)</span>
+		<span class="nb">panic</span><span class="p">(</span><span class="nx">plainError</span><span class="p">(</span><span class="s">&quot;close of closed channel&quot;</span><span class="p">))</span>
+	<span class="p">}</span>
+
+	<span class="k">if</span> <span class="nx">raceenabled</span> <span class="p">{</span>
+		<span class="nx">callerpc</span> <span class="o">:=</span> <span class="nx">getcallerpc</span><span class="p">(</span><span class="nx">unsafe</span><span class="p">.</span><span class="nx">Pointer</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">c</span><span class="p">))</span>
+		<span class="nx">racewritepc</span><span class="p">(</span><span class="nx">unsafe</span><span class="p">.</span><span class="nx">Pointer</span><span class="p">(</span><span class="nx">c</span><span class="p">),</span> <span class="nx">callerpc</span><span class="p">,</span> <span class="nx">funcPC</span><span class="p">(</span><span class="nx">closechan</span><span class="p">))</span>
+		<span class="nx">racerelease</span><span class="p">(</span><span class="nx">unsafe</span><span class="p">.</span><span class="nx">Pointer</span><span class="p">(</span><span class="nx">c</span><span class="p">))</span>
+	<span class="p">}</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-46">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-46">&#182;</a>
+              </div>
+                <p>The channel is closed now.</p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre>	<span class="nx">c</span><span class="p">.</span><span class="nx">closed</span> <span class="p">=</span> <span class="mi">1</span>
+
+	<span class="kd">var</span> <span class="nx">glist</span> <span class="o">*</span><span class="nx">g</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-47">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-47">&#182;</a>
+              </div>
+                <p>Release all readers on the queue.
+Sets the receivers <code>g.param</code> to <code>nil</code> so it is clear that the channel
+was closed.</p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre>	<span class="k">for</span> <span class="p">{</span>
+		<span class="nx">sg</span> <span class="o">:=</span> <span class="nx">c</span><span class="p">.</span><span class="nx">recvq</span><span class="p">.</span><span class="nx">dequeue</span><span class="p">()</span>
+		<span class="k">if</span> <span class="nx">sg</span> <span class="o">==</span> <span class="kc">nil</span> <span class="p">{</span>
+			<span class="k">break</span>
+		<span class="p">}</span>
+		<span class="k">if</span> <span class="nx">sg</span><span class="p">.</span><span class="nx">elem</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
+			<span class="nx">memclr</span><span class="p">(</span><span class="nx">sg</span><span class="p">.</span><span class="nx">elem</span><span class="p">,</span> <span class="nb">uintptr</span><span class="p">(</span><span class="nx">c</span><span class="p">.</span><span class="nx">elemsize</span><span class="p">))</span>
+			<span class="nx">sg</span><span class="p">.</span><span class="nx">elem</span> <span class="p">=</span> <span class="kc">nil</span>
+		<span class="p">}</span>
+		<span class="k">if</span> <span class="nx">sg</span><span class="p">.</span><span class="nx">releasetime</span> <span class="o">!=</span> <span class="mi">0</span> <span class="p">{</span>
+			<span class="nx">sg</span><span class="p">.</span><span class="nx">releasetime</span> <span class="p">=</span> <span class="nx">cputicks</span><span class="p">()</span>
+		<span class="p">}</span>
+		<span class="nx">gp</span> <span class="o">:=</span> <span class="nx">sg</span><span class="p">.</span><span class="nx">g</span>
+		<span class="nx">gp</span><span class="p">.</span><span class="nx">param</span> <span class="p">=</span> <span class="kc">nil</span>
+		<span class="k">if</span> <span class="nx">raceenabled</span> <span class="p">{</span>
+			<span class="nx">raceacquireg</span><span class="p">(</span><span class="nx">gp</span><span class="p">,</span> <span class="nx">unsafe</span><span class="p">.</span><span class="nx">Pointer</span><span class="p">(</span><span class="nx">c</span><span class="p">))</span>
+		<span class="p">}</span>
+		<span class="nx">gp</span><span class="p">.</span><span class="nx">schedlink</span><span class="p">.</span><span class="nx">set</span><span class="p">(</span><span class="nx">glist</span><span class="p">)</span>
+		<span class="nx">glist</span> <span class="p">=</span> <span class="nx">gp</span>
+	<span class="p">}</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-48">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-48">&#182;</a>
+              </div>
+                <p>Release all waiting senders.
+Sets the senders <code>g.param</code> to <code>nil</code> so it is clear that the channel
+was closed and they will panic! <a href="#axiom2">AXIOM #2</a></p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre>	<span class="k">for</span> <span class="p">{</span>
+		<span class="nx">sg</span> <span class="o">:=</span> <span class="nx">c</span><span class="p">.</span><span class="nx">sendq</span><span class="p">.</span><span class="nx">dequeue</span><span class="p">()</span>
+		<span class="k">if</span> <span class="nx">sg</span> <span class="o">==</span> <span class="kc">nil</span> <span class="p">{</span>
+			<span class="k">break</span>
+		<span class="p">}</span>
+		<span class="nx">sg</span><span class="p">.</span><span class="nx">elem</span> <span class="p">=</span> <span class="kc">nil</span>
+		<span class="k">if</span> <span class="nx">sg</span><span class="p">.</span><span class="nx">releasetime</span> <span class="o">!=</span> <span class="mi">0</span> <span class="p">{</span>
+			<span class="nx">sg</span><span class="p">.</span><span class="nx">releasetime</span> <span class="p">=</span> <span class="nx">cputicks</span><span class="p">()</span>
+		<span class="p">}</span>
+		<span class="nx">gp</span> <span class="o">:=</span> <span class="nx">sg</span><span class="p">.</span><span class="nx">g</span>
+		<span class="nx">gp</span><span class="p">.</span><span class="nx">param</span> <span class="p">=</span> <span class="kc">nil</span>
+		<span class="k">if</span> <span class="nx">raceenabled</span> <span class="p">{</span>
+			<span class="nx">raceacquireg</span><span class="p">(</span><span class="nx">gp</span><span class="p">,</span> <span class="nx">unsafe</span><span class="p">.</span><span class="nx">Pointer</span><span class="p">(</span><span class="nx">c</span><span class="p">))</span>
+		<span class="p">}</span>
+		<span class="nx">gp</span><span class="p">.</span><span class="nx">schedlink</span><span class="p">.</span><span class="nx">set</span><span class="p">(</span><span class="nx">glist</span><span class="p">)</span>
+		<span class="nx">glist</span> <span class="p">=</span> <span class="nx">gp</span>
+	<span class="p">}</span>
+	<span class="nx">unlock</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">c</span><span class="p">.</span><span class="nx">lock</span><span class="p">)</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-49">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-49">&#182;</a>
+              </div>
+                <p>Now schedule all the released goroutines, the channel lock was dropped.</p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre>	<span class="k">for</span> <span class="nx">glist</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
+		<span class="nx">gp</span> <span class="o">:=</span> <span class="nx">glist</span>
+		<span class="nx">glist</span> <span class="p">=</span> <span class="nx">glist</span><span class="p">.</span><span class="nx">schedlink</span><span class="p">.</span><span class="nx">ptr</span><span class="p">()</span>
+		<span class="nx">gp</span><span class="p">.</span><span class="nx">schedlink</span> <span class="p">=</span> <span class="mi">0</span>
+		<span class="nx">goready</span><span class="p">(</span><span class="nx">gp</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span>
+	<span class="p">}</span>
+<span class="p">}</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-50">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-50">&#182;</a>
+              </div>
+                <h2>Receive</h2>
+
+<p>entry points for <code>&lt;- c</code> from compiled code</p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre><span class="kd">func</span> <span class="nx">chanrecv1</span><span class="p">(</span><span class="nx">t</span> <span class="o">*</span><span class="nx">chantype</span><span class="p">,</span> <span class="nx">c</span> <span class="o">*</span><span class="nx">hchan</span><span class="p">,</span> <span class="nx">elem</span> <span class="nx">unsafe</span><span class="p">.</span><span class="nx">Pointer</span><span class="p">)</span> <span class="p">{</span>
+	<span class="nx">chanrecv</span><span class="p">(</span><span class="nx">t</span><span class="p">,</span> <span class="nx">c</span><span class="p">,</span> <span class="nx">elem</span><span class="p">,</span> <span class="kc">true</span><span class="p">)</span>
+<span class="p">}</span>
+
+<span class="kd">func</span> <span class="nx">chanrecv2</span><span class="p">(</span><span class="nx">t</span> <span class="o">*</span><span class="nx">chantype</span><span class="p">,</span> <span class="nx">c</span> <span class="o">*</span><span class="nx">hchan</span><span class="p">,</span> <span class="nx">elem</span> <span class="nx">unsafe</span><span class="p">.</span><span class="nx">Pointer</span><span class="p">)</span> <span class="p">(</span><span class="nx">received</span> <span class="kt">bool</span><span class="p">)</span> <span class="p">{</span>
+	<span class="nx">_</span><span class="p">,</span> <span class="nx">received</span> <span class="p">=</span> <span class="nx">chanrecv</span><span class="p">(</span><span class="nx">t</span><span class="p">,</span> <span class="nx">c</span><span class="p">,</span> <span class="nx">elem</span><span class="p">,</span> <span class="kc">true</span><span class="p">)</span>
+	<span class="k">return</span>
+<span class="p">}</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-51">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-51">&#182;</a>
+              </div>
+                <p><code>chanrecv</code> receives on channel c and writes the received data to <code>ep</code>. It is almost the same as <a href="#chansend"><code>chansend</code></a> but in reverse.</p>
+
+<ul>
+<li><code>ep</code> is the pointer where to store the received data, it may be nil, in which case received data is ignored. A non-nil <code>ep</code> must point to the heap or the caller&rsquo;s stack.</li>
+<li><code>block</code> comes from the select statemenet, should the receiver block or not? If not then the goroutine will not sleep but return if it could not complete.
+If block == false and no elements are available, returns (false, false).
+Otherwise, if c is closed, zeros *ep and returns (true, false).
+Otherwise, fills in *ep with an element and returns (true, true).</li>
+</ul>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre><span class="kd">func</span> <span class="nx">chanrecv</span><span class="p">(</span><span class="nx">t</span> <span class="o">*</span><span class="nx">chantype</span><span class="p">,</span> <span class="nx">c</span> <span class="o">*</span><span class="nx">hchan</span><span class="p">,</span> <span class="nx">ep</span> <span class="nx">unsafe</span><span class="p">.</span><span class="nx">Pointer</span><span class="p">,</span> <span class="nx">block</span> <span class="kt">bool</span><span class="p">)</span> <span class="p">(</span><span class="nx">selected</span><span class="p">,</span> <span class="nx">received</span> <span class="kt">bool</span><span class="p">)</span> <span class="p">{</span>
+	<span class="k">if</span> <span class="nx">debugChan</span> <span class="p">{</span>
+		<span class="nb">print</span><span class="p">(</span><span class="s">&quot;chanrecv: chan=&quot;</span><span class="p">,</span> <span class="nx">c</span><span class="p">,</span> <span class="s">&quot;\n&quot;</span><span class="p">)</span>
+	<span class="p">}</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-52">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-52">&#182;</a>
+              </div>
+                <p><a name="axiom3"/>
+<strong>AXIOM #3</strong> - A receive from a nil channel blocks forever</p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre>	<span class="k">if</span> <span class="nx">c</span> <span class="o">==</span> <span class="kc">nil</span> <span class="p">{</span>
+		<span class="k">if</span> <span class="p">!</span><span class="nx">block</span> <span class="p">{</span>
+			<span class="k">return</span>
+		<span class="p">}</span>
+		<span class="nx">gopark</span><span class="p">(</span><span class="kc">nil</span><span class="p">,</span> <span class="kc">nil</span><span class="p">,</span> <span class="s">&quot;chan receive (nil chan)&quot;</span><span class="p">,</span> <span class="nx">traceEvGoStop</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span>
+		<span class="nx">throw</span><span class="p">(</span><span class="s">&quot;unreachable&quot;</span><span class="p">)</span>
+	<span class="p">}</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-53">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-53">&#182;</a>
+              </div>
+                <p><em>Original Comments:</em></p>
+
+<p><em>Fast path: check for failed non-blocking operation without acquiring the lock.</em></p>
+
+<p><em>After observing that the channel is not ready for receiving, we observe that the
+channel is not closed. Each of these observations is a single word-sized read
+(first c.sendq.first or c.qcount, and second c.closed).
+Because a channel cannot be reopened, the later observation of the channel
+being not closed implies that it was also not closed at the moment of the
+first observation. We behave as if we observed the channel at that moment
+and report that the receive cannot proceed.</em></p>
+
+<p><em>The order of operations is important here: reversing the operations can lead to
+incorrect behavior when racing with a close.</em></p>
+
+<p>Fast lock-free check whether there is a chance to receive.</p>
+
+<p>If not blocking and the channel is not closed and one of the following conditions are met bail out and return false, we can’t receive at the moment.</p>
+
+<ol>
+<li>buffer has zero size and there is no sender (unbuffered channel)</li>
+<li>buffer has size and is empty (empty buffered channel)</li>
+</ol>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre>	<span class="k">if</span> <span class="p">!</span><span class="nx">block</span> <span class="o">&amp;&amp;</span> <span class="p">(</span><span class="nx">c</span><span class="p">.</span><span class="nx">dataqsiz</span> <span class="o">==</span> <span class="mi">0</span> <span class="o">&amp;&amp;</span> <span class="nx">c</span><span class="p">.</span><span class="nx">sendq</span><span class="p">.</span><span class="nx">first</span> <span class="o">==</span> <span class="kc">nil</span> <span class="o">||</span>
+		<span class="nx">c</span><span class="p">.</span><span class="nx">dataqsiz</span> <span class="p">&gt;</span> <span class="mi">0</span> <span class="o">&amp;&amp;</span> <span class="nx">atomic</span><span class="p">.</span><span class="nx">Loaduint</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">c</span><span class="p">.</span><span class="nx">qcount</span><span class="p">)</span> <span class="o">==</span> <span class="mi">0</span><span class="p">)</span> <span class="o">&amp;&amp;</span>
+		<span class="nx">atomic</span><span class="p">.</span><span class="nx">Load</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">c</span><span class="p">.</span><span class="nx">closed</span><span class="p">)</span> <span class="o">==</span> <span class="mi">0</span> <span class="p">{</span>
+		<span class="k">return</span>
+	<span class="p">}</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-54">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-54">&#182;</a>
+              </div>
+                <p>Acquire the lock so we are thread safe from now on.</p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre>	<span class="kd">var</span> <span class="nx">t0</span> <span class="kt">int64</span>
+	<span class="k">if</span> <span class="nx">blockprofilerate</span> <span class="p">&gt;</span> <span class="mi">0</span> <span class="p">{</span>
+		<span class="nx">t0</span> <span class="p">=</span> <span class="nx">cputicks</span><span class="p">()</span>
+	<span class="p">}</span>
+
+	<span class="nx">lock</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">c</span><span class="p">.</span><span class="nx">lock</span><span class="p">)</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-55">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-55">&#182;</a>
+              </div>
+                <p><a name="axiom4"/>
+<strong>AXIOM #4</strong> - A receive from a closed channel returns the zero value immediately</p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre>	<span class="k">if</span> <span class="nx">c</span><span class="p">.</span><span class="nx">closed</span> <span class="o">!=</span> <span class="mi">0</span> <span class="o">&amp;&amp;</span> <span class="nx">c</span><span class="p">.</span><span class="nx">qcount</span> <span class="o">==</span> <span class="mi">0</span> <span class="p">{</span>
+		<span class="k">if</span> <span class="nx">raceenabled</span> <span class="p">{</span>
+			<span class="nx">raceacquire</span><span class="p">(</span><span class="nx">unsafe</span><span class="p">.</span><span class="nx">Pointer</span><span class="p">(</span><span class="nx">c</span><span class="p">))</span>
+		<span class="p">}</span>
+		<span class="nx">unlock</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">c</span><span class="p">.</span><span class="nx">lock</span><span class="p">)</span>
+		<span class="k">if</span> <span class="nx">ep</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-56">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-56">&#182;</a>
+              </div>
+                <p>Zero the destination memory and return.</p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre>			<span class="nx">memclr</span><span class="p">(</span><span class="nx">ep</span><span class="p">,</span> <span class="nb">uintptr</span><span class="p">(</span><span class="nx">c</span><span class="p">.</span><span class="nx">elemsize</span><span class="p">))</span>
+		<span class="p">}</span>
+		<span class="k">return</span> <span class="kc">true</span><span class="p">,</span> <span class="kc">false</span>
+	<span class="p">}</span>
+
+	<span class="k">if</span> <span class="nx">sg</span> <span class="o">:=</span> <span class="nx">c</span><span class="p">.</span><span class="nx">sendq</span><span class="p">.</span><span class="nx">dequeue</span><span class="p">();</span> <span class="nx">sg</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-57">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-57">&#182;</a>
+              </div>
+                <p>Found a waiting sender. If buffer is size 0, receive value
+directly from sender. Otherwise, receive from head of queue
+and add the sender&rsquo;s value to the tail of the queue (both map to
+the same buffer slot because the queue is full).<a href="#recv"><code>recv</code></a></p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre>		<span class="nx">recv</span><span class="p">(</span><span class="nx">c</span><span class="p">,</span> <span class="nx">sg</span><span class="p">,</span> <span class="nx">ep</span><span class="p">,</span> <span class="kd">func</span><span class="p">()</span> <span class="p">{</span> <span class="nx">unlock</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">c</span><span class="p">.</span><span class="nx">lock</span><span class="p">)</span> <span class="p">})</span>
+		<span class="k">return</span> <span class="kc">true</span><span class="p">,</span> <span class="kc">true</span>
+	<span class="p">}</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-58">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-58">&#182;</a>
+              </div>
+                <p>Receive directly from the ring buffer</p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre>	<span class="k">if</span> <span class="nx">c</span><span class="p">.</span><span class="nx">qcount</span> <span class="p">&gt;</span> <span class="mi">0</span> <span class="p">{</span>
+		<span class="nx">qp</span> <span class="o">:=</span> <span class="nx">chanbuf</span><span class="p">(</span><span class="nx">c</span><span class="p">,</span> <span class="nx">c</span><span class="p">.</span><span class="nx">recvx</span><span class="p">)</span>
+		<span class="k">if</span> <span class="nx">raceenabled</span> <span class="p">{</span>
+			<span class="nx">raceacquire</span><span class="p">(</span><span class="nx">qp</span><span class="p">)</span>
+			<span class="nx">racerelease</span><span class="p">(</span><span class="nx">qp</span><span class="p">)</span>
+		<span class="p">}</span>
+		<span class="k">if</span> <span class="nx">ep</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
+			<span class="nx">typedmemmove</span><span class="p">(</span><span class="nx">c</span><span class="p">.</span><span class="nx">elemtype</span><span class="p">,</span> <span class="nx">ep</span><span class="p">,</span> <span class="nx">qp</span><span class="p">)</span>
+		<span class="p">}</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-59">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-59">&#182;</a>
+              </div>
+                <p>Zero the memory in the ring buffer on the recvx slot.</p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre>		<span class="nx">memclr</span><span class="p">(</span><span class="nx">qp</span><span class="p">,</span> <span class="nb">uintptr</span><span class="p">(</span><span class="nx">c</span><span class="p">.</span><span class="nx">elemsize</span><span class="p">))</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-60">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-60">&#182;</a>
+              </div>
+                <p>Because it is a ring buffer we wrap the <code>recvx</code> if it is
+pointing beyond the buffer.</p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre>		<span class="nx">c</span><span class="p">.</span><span class="nx">recvx</span><span class="o">++</span>
+		<span class="k">if</span> <span class="nx">c</span><span class="p">.</span><span class="nx">recvx</span> <span class="o">==</span> <span class="nx">c</span><span class="p">.</span><span class="nx">dataqsiz</span> <span class="p">{</span>
+			<span class="nx">c</span><span class="p">.</span><span class="nx">recvx</span> <span class="p">=</span> <span class="mi">0</span>
+		<span class="p">}</span>
+		<span class="nx">c</span><span class="p">.</span><span class="nx">qcount</span><span class="o">--</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-61">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-61">&#182;</a>
+              </div>
+                <p>Unlock and return true as the value was received.</p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre>		<span class="nx">unlock</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">c</span><span class="p">.</span><span class="nx">lock</span><span class="p">)</span>
+		<span class="k">return</span> <span class="kc">true</span><span class="p">,</span> <span class="kc">true</span>
+	<span class="p">}</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-62">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-62">&#182;</a>
+              </div>
+                <p>We are at the point where we couldn&rsquo;t receive any value the
+ring buffer is empty and there is no sender, so if it should
+not block bail out now.</p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre>	<span class="k">if</span> <span class="p">!</span><span class="nx">block</span> <span class="p">{</span>
+		<span class="nx">unlock</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">c</span><span class="p">.</span><span class="nx">lock</span><span class="p">)</span>
+		<span class="k">return</span> <span class="kc">false</span><span class="p">,</span> <span class="kc">false</span>
+	<span class="p">}</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-63">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-63">&#182;</a>
+              </div>
+                <p>No sender available: block on this channel.Create new <code>sudog</code>
+struct for current receiver and channel and enqueue it to the
+wait list.</p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre>	<span class="nx">gp</span> <span class="o">:=</span> <span class="nx">getg</span><span class="p">()</span>
+	<span class="nx">mysg</span> <span class="o">:=</span> <span class="nx">acquireSudog</span><span class="p">()</span>
+	<span class="nx">mysg</span><span class="p">.</span><span class="nx">releasetime</span> <span class="p">=</span> <span class="mi">0</span>
+	<span class="k">if</span> <span class="nx">t0</span> <span class="o">!=</span> <span class="mi">0</span> <span class="p">{</span>
+		<span class="nx">mysg</span><span class="p">.</span><span class="nx">releasetime</span> <span class="p">=</span> <span class="o">-</span><span class="mi">1</span>
+	<span class="p">}</span>
+	<span class="nx">mysg</span><span class="p">.</span><span class="nx">elem</span> <span class="p">=</span> <span class="nx">ep</span>
+	<span class="nx">mysg</span><span class="p">.</span><span class="nx">waitlink</span> <span class="p">=</span> <span class="kc">nil</span>
+	<span class="nx">gp</span><span class="p">.</span><span class="nx">waiting</span> <span class="p">=</span> <span class="nx">mysg</span>
+	<span class="nx">mysg</span><span class="p">.</span><span class="nx">g</span> <span class="p">=</span> <span class="nx">gp</span>
+	<span class="nx">mysg</span><span class="p">.</span><span class="nx">selectdone</span> <span class="p">=</span> <span class="kc">nil</span>
+	<span class="nx">mysg</span><span class="p">.</span><span class="nx">c</span> <span class="p">=</span> <span class="nx">c</span>
+	<span class="nx">gp</span><span class="p">.</span><span class="nx">param</span> <span class="p">=</span> <span class="kc">nil</span>
+	<span class="nx">c</span><span class="p">.</span><span class="nx">recvq</span><span class="p">.</span><span class="nx">enqueue</span><span class="p">(</span><span class="nx">mysg</span><span class="p">)</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-64">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-64">&#182;</a>
+              </div>
+                <p>Here the goroutine goes to sleep and scheduler will wake it
+once there is a sender on this channel. The lock is released
+inside the function.</p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre>	<span class="nx">goparkunlock</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">c</span><span class="p">.</span><span class="nx">lock</span><span class="p">,</span> <span class="s">&quot;chan receive&quot;</span><span class="p">,</span> <span class="nx">traceEvGoBlockRecv</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-65">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-65">&#182;</a>
+              </div>
+                <p><a name="rcv_wakeup" />
+This comes after the blocking, the goroutine is awaken.</p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre>	<span class="k">if</span> <span class="nx">mysg</span> <span class="o">!=</span> <span class="nx">gp</span><span class="p">.</span><span class="nx">waiting</span> <span class="p">{</span>
+		<span class="nx">throw</span><span class="p">(</span><span class="s">&quot;G waiting list is corrupted&quot;</span><span class="p">)</span>
+	<span class="p">}</span>
+	<span class="nx">gp</span><span class="p">.</span><span class="nx">waiting</span> <span class="p">=</span> <span class="kc">nil</span>
+	<span class="k">if</span> <span class="nx">mysg</span><span class="p">.</span><span class="nx">releasetime</span> <span class="p">&gt;</span> <span class="mi">0</span> <span class="p">{</span>
+		<span class="nx">blockevent</span><span class="p">(</span><span class="nx">mysg</span><span class="p">.</span><span class="nx">releasetime</span><span class="o">-</span><span class="nx">t0</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span>
+	<span class="p">}</span>
+	<span class="nx">closed</span> <span class="o">:=</span> <span class="nx">gp</span><span class="p">.</span><span class="nx">param</span> <span class="o">==</span> <span class="kc">nil</span>
+	<span class="nx">gp</span><span class="p">.</span><span class="nx">param</span> <span class="p">=</span> <span class="kc">nil</span>
+	<span class="nx">mysg</span><span class="p">.</span><span class="nx">c</span> <span class="p">=</span> <span class="kc">nil</span>
+	<span class="nx">releaseSudog</span><span class="p">(</span><span class="nx">mysg</span><span class="p">)</span>
+	<span class="k">return</span> <span class="kc">true</span><span class="p">,</span> <span class="p">!</span><span class="nx">closed</span>
+<span class="p">}</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-66">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-66">&#182;</a>
+              </div>
+                <p><code>recv</code> processes a receive operation on a full channel c.
+There are 2 steps:</p>
+
+<ol>
+<li>The value sent by the sender <code>sg</code> is put into the channel
+and the sender is woken up to go on its merry way.</li>
+<li>The value received by the receiver (the current G) is
+written to <code>ep</code>.</li>
+</ol>
+
+<p>For synchronous channels, both values are the same.
+For asynchronous channels, the receiver gets its data from
+the channel buffer and the sender&rsquo;s data is put in the
+channel buffer.</p>
+
+<p>Channel c must be full and locked. recv unlocks c with <code>unlockf</code>.
+<code>sg</code> must already be dequeued from c.
+A non-nil <code>ep</code> must point to the heap or the caller&rsquo;s stack.</p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre><span class="kd">func</span> <span class="nx">recv</span><span class="p">(</span><span class="nx">c</span> <span class="o">*</span><span class="nx">hchan</span><span class="p">,</span> <span class="nx">sg</span> <span class="o">*</span><span class="nx">sudog</span><span class="p">,</span> <span class="nx">ep</span> <span class="nx">unsafe</span><span class="p">.</span><span class="nx">Pointer</span><span class="p">,</span> <span class="nx">unlockf</span> <span class="kd">func</span><span class="p">())</span> <span class="p">{</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-67">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-67">&#182;</a>
+              </div>
+                <p>There is no buffer, unbuffered channel.</p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre>	<span class="k">if</span> <span class="nx">c</span><span class="p">.</span><span class="nx">dataqsiz</span> <span class="o">==</span> <span class="mi">0</span> <span class="p">{</span>
+		<span class="k">if</span> <span class="nx">raceenabled</span> <span class="p">{</span>
+			<span class="nx">racesync</span><span class="p">(</span><span class="nx">c</span><span class="p">,</span> <span class="nx">sg</span><span class="p">)</span>
+		<span class="p">}</span>
+		<span class="k">if</span> <span class="nx">ep</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-68">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-68">&#182;</a>
+              </div>
+                <p>Copy data from sender.
+<code>ep</code> points to own stack or heap, so nothing
+special (ala <a href="#sendDirect"><code>sendDirect</code></a>) is needed
+here.</p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre>			<span class="nx">typedmemmove</span><span class="p">(</span><span class="nx">c</span><span class="p">.</span><span class="nx">elemtype</span><span class="p">,</span> <span class="nx">ep</span><span class="p">,</span> <span class="nx">sg</span><span class="p">.</span><span class="nx">elem</span><span class="p">)</span>
+		<span class="p">}</span>
+	<span class="p">}</span> <span class="k">else</span> <span class="p">{</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-69">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-69">&#182;</a>
+              </div>
+                <p>The buffer is full. Take the item at the
+head of the queue. Make the sender enqueue
+its item at the tail of the queue. Since the
+queue is full, those are both at the same slot.</p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre>		<span class="nx">qp</span> <span class="o">:=</span> <span class="nx">chanbuf</span><span class="p">(</span><span class="nx">c</span><span class="p">,</span> <span class="nx">c</span><span class="p">.</span><span class="nx">recvx</span><span class="p">)</span>
+		<span class="k">if</span> <span class="nx">raceenabled</span> <span class="p">{</span>
+			<span class="nx">raceacquire</span><span class="p">(</span><span class="nx">qp</span><span class="p">)</span>
+			<span class="nx">racerelease</span><span class="p">(</span><span class="nx">qp</span><span class="p">)</span>
+			<span class="nx">raceacquireg</span><span class="p">(</span><span class="nx">sg</span><span class="p">.</span><span class="nx">g</span><span class="p">,</span> <span class="nx">qp</span><span class="p">)</span>
+			<span class="nx">racereleaseg</span><span class="p">(</span><span class="nx">sg</span><span class="p">.</span><span class="nx">g</span><span class="p">,</span> <span class="nx">qp</span><span class="p">)</span>
+		<span class="p">}</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-70">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-70">&#182;</a>
+              </div>
+                <p>Copy data from queue to receiver</p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre>		<span class="k">if</span> <span class="nx">ep</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
+			<span class="nx">typedmemmove</span><span class="p">(</span><span class="nx">c</span><span class="p">.</span><span class="nx">elemtype</span><span class="p">,</span> <span class="nx">ep</span><span class="p">,</span> <span class="nx">qp</span><span class="p">)</span>
+		<span class="p">}</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-71">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-71">&#182;</a>
+              </div>
+                <p>Copy data from sender to queue</p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre>		<span class="nx">typedmemmove</span><span class="p">(</span><span class="nx">c</span><span class="p">.</span><span class="nx">elemtype</span><span class="p">,</span> <span class="nx">qp</span><span class="p">,</span> <span class="nx">sg</span><span class="p">.</span><span class="nx">elem</span><span class="p">)</span>
+		<span class="nx">c</span><span class="p">.</span><span class="nx">recvx</span><span class="o">++</span>
+		<span class="k">if</span> <span class="nx">c</span><span class="p">.</span><span class="nx">recvx</span> <span class="o">==</span> <span class="nx">c</span><span class="p">.</span><span class="nx">dataqsiz</span> <span class="p">{</span>
+			<span class="nx">c</span><span class="p">.</span><span class="nx">recvx</span> <span class="p">=</span> <span class="mi">0</span>
+		<span class="p">}</span>
+		<span class="nx">c</span><span class="p">.</span><span class="nx">sendx</span> <span class="p">=</span> <span class="nx">c</span><span class="p">.</span><span class="nx">recvx</span> <span class="c1">// c.sendx = (c.sendx+1) % c.dataqsiz</span>
+	<span class="p">}</span>
+	<span class="nx">sg</span><span class="p">.</span><span class="nx">elem</span> <span class="p">=</span> <span class="kc">nil</span>
+	<span class="nx">gp</span> <span class="o">:=</span> <span class="nx">sg</span><span class="p">.</span><span class="nx">g</span>
+	<span class="nx">unlockf</span><span class="p">()</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-72">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-72">&#182;</a>
+              </div>
+                <p>Set the sender <code>g.param</code> so it is non-nil to signal that the
+channel was not closed.</p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre>	<span class="nx">gp</span><span class="p">.</span><span class="nx">param</span> <span class="p">=</span> <span class="nx">unsafe</span><span class="p">.</span><span class="nx">Pointer</span><span class="p">(</span><span class="nx">sg</span><span class="p">)</span>
+	<span class="k">if</span> <span class="nx">sg</span><span class="p">.</span><span class="nx">releasetime</span> <span class="o">!=</span> <span class="mi">0</span> <span class="p">{</span>
+		<span class="nx">sg</span><span class="p">.</span><span class="nx">releasetime</span> <span class="p">=</span> <span class="nx">cputicks</span><span class="p">()</span>
+	<span class="p">}</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-73">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-73">&#182;</a>
+              </div>
+                <p>Wake the sending goroutine</p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre>	<span class="nx">goready</span><span class="p">(</span><span class="nx">gp</span><span class="p">,</span> <span class="mi">4</span><span class="p">)</span>
+<span class="p">}</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-74">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-74">&#182;</a>
+              </div>
+                <h2>Select</h2>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-75">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-75">&#182;</a>
+              </div>
+                <p><code>selectnbsend</code> is used for compiler implementation of</p>
+
+<pre><code class="language-go">select {
+case c &lt;- v:
+	... foo
+default:
+	... bar
+}
+</code></pre>
+
+<p>as</p>
+
+<pre><code class="language-go">if selectnbsend(c, v) {
+	... foo
+} else {
+	... bar
+}
+</code></pre>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre><span class="kd">func</span> <span class="nx">selectnbsend</span><span class="p">(</span><span class="nx">t</span> <span class="o">*</span><span class="nx">chantype</span><span class="p">,</span> <span class="nx">c</span> <span class="o">*</span><span class="nx">hchan</span><span class="p">,</span> <span class="nx">elem</span> <span class="nx">unsafe</span><span class="p">.</span><span class="nx">Pointer</span><span class="p">)</span> <span class="p">(</span><span class="nx">selected</span> <span class="kt">bool</span><span class="p">)</span> <span class="p">{</span>
+	<span class="k">return</span> <span class="nx">chansend</span><span class="p">(</span><span class="nx">t</span><span class="p">,</span> <span class="nx">c</span><span class="p">,</span> <span class="nx">elem</span><span class="p">,</span> <span class="kc">false</span><span class="p">,</span> <span class="nx">getcallerpc</span><span class="p">(</span><span class="nx">unsafe</span><span class="p">.</span><span class="nx">Pointer</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">t</span><span class="p">)))</span>
+<span class="p">}</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-76">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-76">&#182;</a>
+              </div>
+                <p><code>selectnbrecv</code> is used for compiler implementation of</p>
+
+<pre><code class="language-go">select {
+case v = &lt;-c:
+	... foo
+default:
+	... bar
+}
+</code></pre>
+
+<p>as</p>
+
+<pre><code class="language-go">if selectnbrecv(&amp;v, c) {
+	... foo
+} else {
+	... bar
+}
+</code></pre>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre><span class="kd">func</span> <span class="nx">selectnbrecv</span><span class="p">(</span><span class="nx">t</span> <span class="o">*</span><span class="nx">chantype</span><span class="p">,</span> <span class="nx">elem</span> <span class="nx">unsafe</span><span class="p">.</span><span class="nx">Pointer</span><span class="p">,</span> <span class="nx">c</span> <span class="o">*</span><span class="nx">hchan</span><span class="p">)</span> <span class="p">(</span><span class="nx">selected</span> <span class="kt">bool</span><span class="p">)</span> <span class="p">{</span>
+	<span class="nx">selected</span><span class="p">,</span> <span class="nx">_</span> <span class="p">=</span> <span class="nx">chanrecv</span><span class="p">(</span><span class="nx">t</span><span class="p">,</span> <span class="nx">c</span><span class="p">,</span> <span class="nx">elem</span><span class="p">,</span> <span class="kc">false</span><span class="p">)</span>
+	<span class="k">return</span>
+<span class="p">}</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-77">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-77">&#182;</a>
+              </div>
+                <p><code>selectnbrecv2</code> is used for compiler implementation of</p>
+
+<pre><code class="language-go">select {
+case v, ok = &lt;-c:
+	... foo
+default:
+	... bar
+}
+</code></pre>
+
+<p>as</p>
+
+<pre><code class="language-golang">if c != nil &amp;&amp; selectnbrecv2(&amp;v, &amp;ok, c) {
+	... foo
+} else {
+	... bar
+}
+</code></pre>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre><span class="kd">func</span> <span class="nx">selectnbrecv2</span><span class="p">(</span><span class="nx">t</span> <span class="o">*</span><span class="nx">chantype</span><span class="p">,</span> <span class="nx">elem</span> <span class="nx">unsafe</span><span class="p">.</span><span class="nx">Pointer</span><span class="p">,</span> <span class="nx">received</span> <span class="o">*</span><span class="kt">bool</span><span class="p">,</span> <span class="nx">c</span> <span class="o">*</span><span class="nx">hchan</span><span class="p">)</span> <span class="p">(</span><span class="nx">selected</span> <span class="kt">bool</span><span class="p">)</span> <span class="p">{</span>
+	<span class="nx">selected</span><span class="p">,</span> <span class="o">*</span><span class="nx">received</span> <span class="p">=</span> <span class="nx">chanrecv</span><span class="p">(</span><span class="nx">t</span><span class="p">,</span> <span class="nx">c</span><span class="p">,</span> <span class="nx">elem</span><span class="p">,</span> <span class="kc">false</span><span class="p">)</span>
+	<span class="k">return</span>
+<span class="p">}</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-78">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-78">&#182;</a>
+              </div>
+                <p><code>reflect.chansend</code></p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre><span class="kd">func</span> <span class="nx">reflect_chansend</span><span class="p">(</span><span class="nx">t</span> <span class="o">*</span><span class="nx">chantype</span><span class="p">,</span> <span class="nx">c</span> <span class="o">*</span><span class="nx">hchan</span><span class="p">,</span> <span class="nx">elem</span> <span class="nx">unsafe</span><span class="p">.</span><span class="nx">Pointer</span><span class="p">,</span> <span class="nx">nb</span> <span class="kt">bool</span><span class="p">)</span> <span class="p">(</span><span class="nx">selected</span> <span class="kt">bool</span><span class="p">)</span> <span class="p">{</span>
+	<span class="k">return</span> <span class="nx">chansend</span><span class="p">(</span><span class="nx">t</span><span class="p">,</span> <span class="nx">c</span><span class="p">,</span> <span class="nx">elem</span><span class="p">,</span> <span class="p">!</span><span class="nx">nb</span><span class="p">,</span> <span class="nx">getcallerpc</span><span class="p">(</span><span class="nx">unsafe</span><span class="p">.</span><span class="nx">Pointer</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">t</span><span class="p">)))</span>
+<span class="p">}</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-79">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-79">&#182;</a>
+              </div>
+                <p><code>reflect.chanrecv</code></p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre><span class="kd">func</span> <span class="nx">reflect_chanrecv</span><span class="p">(</span><span class="nx">t</span> <span class="o">*</span><span class="nx">chantype</span><span class="p">,</span> <span class="nx">c</span> <span class="o">*</span><span class="nx">hchan</span><span class="p">,</span> <span class="nx">nb</span> <span class="kt">bool</span><span class="p">,</span> <span class="nx">elem</span> <span class="nx">unsafe</span><span class="p">.</span><span class="nx">Pointer</span><span class="p">)</span> <span class="p">(</span><span class="nx">selected</span> <span class="kt">bool</span><span class="p">,</span> <span class="nx">received</span> <span class="kt">bool</span><span class="p">)</span> <span class="p">{</span>
+	<span class="k">return</span> <span class="nx">chanrecv</span><span class="p">(</span><span class="nx">t</span><span class="p">,</span> <span class="nx">c</span><span class="p">,</span> <span class="nx">elem</span><span class="p">,</span> <span class="p">!</span><span class="nx">nb</span><span class="p">)</span>
+<span class="p">}</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-80">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-80">&#182;</a>
+              </div>
+                <p><code>reflect.chanlen</code></p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre><span class="kd">func</span> <span class="nx">reflect_chanlen</span><span class="p">(</span><span class="nx">c</span> <span class="o">*</span><span class="nx">hchan</span><span class="p">)</span> <span class="kt">int</span> <span class="p">{</span>
+	<span class="k">if</span> <span class="nx">c</span> <span class="o">==</span> <span class="kc">nil</span> <span class="p">{</span>
+		<span class="k">return</span> <span class="mi">0</span>
+	<span class="p">}</span>
+	<span class="k">return</span> <span class="nb">int</span><span class="p">(</span><span class="nx">c</span><span class="p">.</span><span class="nx">qcount</span><span class="p">)</span>
+<span class="p">}</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-81">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-81">&#182;</a>
+              </div>
+                <p><code>reflect.chancap</code></p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre><span class="kd">func</span> <span class="nx">reflect_chancap</span><span class="p">(</span><span class="nx">c</span> <span class="o">*</span><span class="nx">hchan</span><span class="p">)</span> <span class="kt">int</span> <span class="p">{</span>
+	<span class="k">if</span> <span class="nx">c</span> <span class="o">==</span> <span class="kc">nil</span> <span class="p">{</span>
+		<span class="k">return</span> <span class="mi">0</span>
+	<span class="p">}</span>
+	<span class="k">return</span> <span class="nb">int</span><span class="p">(</span><span class="nx">c</span><span class="p">.</span><span class="nx">dataqsiz</span><span class="p">)</span>
+<span class="p">}</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-82">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-82">&#182;</a>
+              </div>
+                <p><code>reflect.chanclose</code></p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre><span class="kd">func</span> <span class="nx">reflect_chanclose</span><span class="p">(</span><span class="nx">c</span> <span class="o">*</span><span class="nx">hchan</span><span class="p">)</span> <span class="p">{</span>
+	<span class="nx">closechan</span><span class="p">(</span><span class="nx">c</span><span class="p">)</span>
+<span class="p">}</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-83">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-83">&#182;</a>
+              </div>
+                <p>Enqueue the <code>sudog</code> to the waiters linked list</p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre><span class="kd">func</span> <span class="p">(</span><span class="nx">q</span> <span class="o">*</span><span class="nx">waitq</span><span class="p">)</span> <span class="nx">enqueue</span><span class="p">(</span><span class="nx">sgp</span> <span class="o">*</span><span class="nx">sudog</span><span class="p">)</span> <span class="p">{</span>
+	<span class="nx">sgp</span><span class="p">.</span><span class="nx">next</span> <span class="p">=</span> <span class="kc">nil</span>
+	<span class="nx">x</span> <span class="o">:=</span> <span class="nx">q</span><span class="p">.</span><span class="nx">last</span>
+	<span class="k">if</span> <span class="nx">x</span> <span class="o">==</span> <span class="kc">nil</span> <span class="p">{</span>
+		<span class="nx">sgp</span><span class="p">.</span><span class="nx">prev</span> <span class="p">=</span> <span class="kc">nil</span>
+		<span class="nx">q</span><span class="p">.</span><span class="nx">first</span> <span class="p">=</span> <span class="nx">sgp</span>
+		<span class="nx">q</span><span class="p">.</span><span class="nx">last</span> <span class="p">=</span> <span class="nx">sgp</span>
+		<span class="k">return</span>
+	<span class="p">}</span>
+	<span class="nx">sgp</span><span class="p">.</span><span class="nx">prev</span> <span class="p">=</span> <span class="nx">x</span>
+	<span class="nx">x</span><span class="p">.</span><span class="nx">next</span> <span class="p">=</span> <span class="nx">sgp</span>
+	<span class="nx">q</span><span class="p">.</span><span class="nx">last</span> <span class="p">=</span> <span class="nx">sgp</span>
+<span class="p">}</span></pre></div>
+            </td>
+          </tr>
+          
+          <tr id="section-84">
+            <td class="docs">
+              <div class="pilwrap">
+                  <a class="pilcrow" href="#section-84">&#182;</a>
+              </div>
+                <p>Dequeue the <code>sudog</code> from the waiters linked list</p>
+
+            </td>
+            <td class="code">
+                <div class="highlight"><pre><span class="kd">func</span> <span class="p">(</span><span class="nx">q</span> <span class="o">*</span><span class="nx">waitq</span><span class="p">)</span> <span class="nx">dequeue</span><span class="p">()</span> <span class="o">*</span><span class="nx">sudog</span> <span class="p">{</span>
+	<span class="k">for</span> <span class="p">{</span>
+		<span class="nx">sgp</span> <span class="o">:=</span> <span class="nx">q</span><span class="p">.</span><span class="nx">first</span>
+		<span class="k">if</span> <span class="nx">sgp</span> <span class="o">==</span> <span class="kc">nil</span> <span class="p">{</span>
+			<span class="k">return</span> <span class="kc">nil</span>
+		<span class="p">}</span>
+		<span class="nx">y</span> <span class="o">:=</span> <span class="nx">sgp</span><span class="p">.</span><span class="nx">next</span>
+		<span class="k">if</span> <span class="nx">y</span> <span class="o">==</span> <span class="kc">nil</span> <span class="p">{</span>
+			<span class="nx">q</span><span class="p">.</span><span class="nx">first</span> <span class="p">=</span> <span class="kc">nil</span>
+			<span class="nx">q</span><span class="p">.</span><span class="nx">last</span> <span class="p">=</span> <span class="kc">nil</span>
+		<span class="p">}</span> <span class="k">else</span> <span class="p">{</span>
+			<span class="nx">y</span><span class="p">.</span><span class="nx">prev</span> <span class="p">=</span> <span class="kc">nil</span>
+			<span class="nx">q</span><span class="p">.</span><span class="nx">first</span> <span class="p">=</span> <span class="nx">y</span>
+			<span class="nx">sgp</span><span class="p">.</span><span class="nx">next</span> <span class="p">=</span> <span class="kc">nil</span> <span class="c1">// mark as removed (see dequeueSudog)</span>
+		<span class="p">}</span>
+
+		<span class="k">if</span> <span class="nx">sgp</span><span class="p">.</span><span class="nx">selectdone</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
+			<span class="k">if</span> <span class="o">*</span><span class="nx">sgp</span><span class="p">.</span><span class="nx">selectdone</span> <span class="o">!=</span> <span class="mi">0</span> <span class="o">||</span> <span class="p">!</span><span class="nx">atomic</span><span class="p">.</span><span class="nx">Cas</span><span class="p">(</span><span class="nx">sgp</span><span class="p">.</span><span class="nx">selectdone</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span> <span class="p">{</span>
+				<span class="k">continue</span>
+			<span class="p">}</span>
+		<span class="p">}</span>
+
+		<span class="k">return</span> <span class="nx">sgp</span>
+	<span class="p">}</span>
+<span class="p">}</span>
+
+<span class="kd">func</span> <span class="nx">racesync</span><span class="p">(</span><span class="nx">c</span> <span class="o">*</span><span class="nx">hchan</span><span class="p">,</span> <span class="nx">sg</span> <span class="o">*</span><span class="nx">sudog</span><span class="p">)</span> <span class="p">{</span>
+	<span class="nx">racerelease</span><span class="p">(</span><span class="nx">chanbuf</span><span class="p">(</span><span class="nx">c</span><span class="p">,</span> <span class="mi">0</span><span class="p">))</span>
+	<span class="nx">raceacquireg</span><span class="p">(</span><span class="nx">sg</span><span class="p">.</span><span class="nx">g</span><span class="p">,</span> <span class="nx">chanbuf</span><span class="p">(</span><span class="nx">c</span><span class="p">,</span> <span class="mi">0</span><span class="p">))</span>
+	<span class="nx">racereleaseg</span><span class="p">(</span><span class="nx">sg</span><span class="p">.</span><span class="nx">g</span><span class="p">,</span> <span class="nx">chanbuf</span><span class="p">(</span><span class="nx">c</span><span class="p">,</span> <span class="mi">0</span><span class="p">))</span>
+	<span class="nx">raceacquire</span><span class="p">(</span><span class="nx">chanbuf</span><span class="p">(</span><span class="nx">c</span><span class="p">,</span> <span class="mi">0</span><span class="p">))</span>
+<span class="p">}</span>
+
+</pre></div>
+            </td>
+          </tr>
+          
+      </tbody>
+    </table>
+  </div>
+</body>
+</html>
