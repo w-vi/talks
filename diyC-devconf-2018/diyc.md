@@ -4,7 +4,7 @@
 
 ---
 
-## Agenda
+## My first experience
 
 ![First experience with containers](first-experience.gif)
 
